@@ -1,0 +1,10 @@
+{
+	"autodeskProduct": "Fusion",
+	"type": "script",
+	"author": "Patrik Dörfler",
+	"description": {
+		"": "PlasmaPen Nexus — parametric model: working render scene + engineering cutaway in one design"
+	},
+	"supportedOS": "windows|mac",
+	"editEnabled": true
+}

@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+PlasmaPenNexus/build_log.txt
+.DS_Store

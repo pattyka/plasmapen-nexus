@@ -1,0 +1,49 @@
+PlasmaPen Nexus check — modules present: pp_body, pp_head, pp_internals, pp_scene
+
+━━ Build ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✓ pp_body  (4 bodies in the render assembly)
+✓ pp_head  (12 bodies in the render assembly)
+✓ pp_internals  (71 bodies in the render assembly)
+✓ pp_scene  (5 bodies in the render assembly)
+
+━━ Interference — 87 pen bodies, render assembly (≥ 0.01 mm³) ━━━━━━━━━━━━━━━━━━
+none
+
+━━ Bore / silhouette ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+internals: all inside the bore (r ≤ 11.3 mm)
+silhouette: every pen body within r ≤ body_r + btn_proud and 0 ≤ x ≤ pen_len
+
+━━ Mass ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+total 248.0 g   target 280 g   (-32.0 g)
+by material: aluminum 118.8, battery 68.4, peek 34.5, steel 13.7, fr4 6.0, plastic 3.5, glass 2.2, copper 0.8
+heaviest: Unibody (alu)/Unibody 118.4, Akku 21700/Cella 68.4, Orr + bélés (PEEK)/Orr + bélés 31.3, CeraPlas F/Piezo rúd 9.5, Hátsó kupak (PEEK)/Hátsó kupak 3.2, Fő NYÁK/NYÁK 2.4, Fő NYÁK/ESP32-S3 árnyékolás 2.3, Driver NYÁK/NYÁK 2.3
+
+━━ Size ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+length 240.12 mm (x -0.01 … 240.10; pen_len = 240.05)   shells max Ø 29.00 mm (body_od = 29)
+chk_bore = +3.689 mm OK
+
+━━ Robustness — 17 variants, one parameter at a time ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+17/17 variants clean; 0 broken (203 s CPU)
+
+━━ Static check — FusionBackend + PlasmaPenNexus.py vs adsk stub 2.0.12157 (pyright) 
+0 real problems, 3 verify-on-Fusion, 12 stub gaps
+verify on real Fusion (newer than the stub):
+  ? pp_core.py:443  FilletFeatureInput.edgeSetInputs (2023+)  — inp.edgeSetInputs.addConstantRadiusEdgeSet(coll, self.vi(radius), True)
+  ? pp_looks.py:368  Appearance.roughness (2025+, guarded by pp_looks._has_api)  — appearance.roughness = float(rough)
+  ? pp_looks.py:387  Appearance.color (2025+, guarded by pp_looks._has_api)  — appearance.color = _rgb(core, color, alpha)
+stub gaps / warnings (not errors):
+  · PlasmaPenNexus.py:148  Arguments missing for parameters "visible", "options"  [optional in the real API; the stub drops defaults]
+  · PlasmaPenNexus.py:150  Cannot assign to attribute "designType" for class "Design"   "int" is not assignable to "DesignTypes"  [stub enums are plain ints]
+  · PlasmaPenNexus.py:152  Cannot assign to attribute "distanceDisplayUnits" for class "FusionUnitsManager"   "int" is not assignable to "DistanceUnits"  [stub enums are plain ints]
+  · PlasmaPenNexus.py:216  Arguments missing for parameters "buttons", "icon"  [optional in the real API; the stub drops defaults]
+  · PlasmaPenNexus.py:219  Arguments missing for parameters "buttons", "icon"  [optional in the real API; the stub drops defaults]
+  · PlasmaPenNexus.py:225  Arguments missing for parameters "buttons", "icon"  [optional in the real API; the stub drops defaults]
+  · pp_core.py:218  Argument missing for parameter "occurrenceForCreation"  [optional in the real API; the stub drops defaults]
+  · pp_core.py:278  Argument of type "int" cannot be assigned to parameter "orientation" of type "DimensionOrientations" in function "addDistanceDimension"   "i  [stub enums are plain ints]
+  · pp_core.py:284  Argument of type "int" cannot be assigned to parameter "orientation" of type "DimensionOrientations" in function "addDistanceDimension"   "i  [stub enums are plain ints]
+  · pp_core.py:291  Argument missing for parameter "occurrenceForCreation"  [optional in the real API; the stub drops defaults]
+  · pp_core.py:462  "BRepEdges" is not iterable   "__iter__" method not defined  [stub collections lack __iter__; real Fusion collections iterate]
+  · pp_core.py:471  "BRepEdges" is not iterable   "__iter__" method not defined  [stub collections lack __iter__; real Fusion collections iterate]
+(typed copy in /var/folders/d2/hlsz4ljx57v2l442c093smmc0000gn/T/pp_static_p298xbl5)
+
+75 s
