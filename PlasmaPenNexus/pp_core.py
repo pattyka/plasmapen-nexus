@@ -1,6 +1,6 @@
 """PlasmaPen Nexus — modelling core.
 
-Part builders (pp_head, pp_body, pp_internals, pp_scene) talk ONLY to the Backend interface
+Part builders (pp_shell, pp_head, pp_insert, pp_electronics, pp_scene) talk ONLY to the Backend interface
 below, never to adsk directly. Two implementations exist:
 
     FusionBackend   (this file)            builds real parametric features in Fusion
