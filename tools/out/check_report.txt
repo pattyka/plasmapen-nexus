@@ -1,49 +1,74 @@
-PlasmaPen Nexus check — modules present: pp_body, pp_head, pp_internals, pp_scene
+PlasmaPen Nexus check — modules present: pp_shell, pp_head, pp_insert, pp_electronics, pp_scene
 
 ━━ Build ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✓ pp_body  (4 bodies in the render assembly)
-✓ pp_head  (12 bodies in the render assembly)
-✓ pp_internals  (71 bodies in the render assembly)
+✓ pp_shell  (4 bodies in the render assembly)
+✓ pp_head  (18 bodies in the render assembly)
+✓ pp_insert  (2 bodies in the render assembly)
+✓ pp_electronics  (86 bodies in the render assembly)
 ✓ pp_scene  (5 bodies in the render assembly)
 
-━━ Interference — 87 pen bodies, render assembly (≥ 0.01 mm³) ━━━━━━━━━━━━━━━━━━
+━━ Interference — 110 pen bodies, render assembly (≥ 0.01 mm³) ━━━━━━━━━━━━━━━━━
 none
 
 ━━ Bore / silhouette ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-internals: all inside the bore (r ≤ 11.3 mm)
+electronics: all inside the bore (r ≤ 16 mm, between the bore flats)
 silhouette: every pen body within r ≤ body_r + btn_proud and 0 ≤ x ≤ pen_len
 
 ━━ Mass ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-total 248.0 g   target 280 g   (-32.0 g)
-by material: aluminum 118.8, battery 68.4, peek 34.5, steel 13.7, fr4 6.0, plastic 3.5, glass 2.2, copper 0.8
-heaviest: Unibody (alu)/Unibody 118.4, Akku 21700/Cella 68.4, Orr + bélés (PEEK)/Orr + bélés 31.3, CeraPlas F/Piezo rúd 9.5, Hátsó kupak (PEEK)/Hátsó kupak 3.2, Fő NYÁK/NYÁK 2.4, Fő NYÁK/ESP32-S3 árnyékolás 2.3, Driver NYÁK/NYÁK 2.3
+total 222.4 g   target 280 g   (-57.6 g)
+by material: aluminum 90.6, battery 67.9, pei 18.6, steel 13.4, peek 10.0, plastic 8.9, glass 7.2, fr4 4.4, copper 1.2
+heaviest: Ház (alu)/Ház 90.3, Akku 21700/Cella 67.9, Betét (PEI)/Betét 18.6, Orrkúp (PEEK)/Orrkúp 6.5, Hátsó kupak (PC)/Kupak 6.4, AI NYÁK/ESP32-S3 árnyékolás 4.8, CeraPlas HF/Piezo 3.9, HV bélés (PEEK)/HV bélés 3.5
+centre of mass x = 126.3 mm from the nozzle (BRIEF: 95 … 125, under the hand)
 
 ━━ Size ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-length 240.12 mm (x -0.01 … 240.10; pen_len = 240.05)   shells max Ø 29.00 mm (body_od = 29)
-chk_bore = +3.689 mm OK
+length 217.77 mm (x -0.01 … 217.76; pen_len = 217.72)   shells max Ø 36.00 mm (body_od = 36)
+chk_top_fade = +7.500 mm OK
+chk_hv_cam = +0.664 mm OK
+chk_hv_led = +2.703 mm OK
+chk_hv_alu = +1.299 mm OK
+chk_hv_board = +12.437 mm OK
+chk_hv_target = +1.500 mm OK
+chk_cam_liner = +0.350 mm OK
+chk_cam_out = +0.622 mm OK
+chk_cam_win = +0.577 mm OK
+chk_cam_view = +0.397 mm OK
+chk_pins = +1.800 mm OK
+chk_fan = +5.674 mm OK
+chk_board_w = +1.414 mm OK
+chk_ai_len = +6.920 mm OK
+chk_tunnel = +0.894 mm OK
+chk_under = +0.502 mm OK
+chk_bat_side = +2.474 mm OK
+chk_wall_top = +0.850 mm OK
+chk_dock_w = +3.592 mm OK
+chk_dock_len = +0.400 mm OK
+shell_chk_wall_tail = +0.300 mm OK
+shell_chk_rail = +0.100 mm OK
+shell_chk_land = +0.792 mm OK
+shell_chk_btn = +0.800 mm OK
+shell_chk_spigot = +0.050 mm OK
+shell_chk_lug = +0.122 mm OK
+shell_chk_tail = +5.240 mm OK
+shell_chk_cav = +3.829 mm OK
+head_chk_beak_view = +1.058 mm OK
+head_chk_cam_back = +1.193 mm OK
+head_chk_cam_top = +0.608 mm OK
+head_chk_hv_cam = +0.250 mm OK
+head_chk_hv_plastic = +0.100 mm OK
+head_chk_led_win = +0.650 mm OK
+head_chk_led_cam = +1.650 mm OK
+head_chk_air = +1.510 mm OK
+ins_chk_air = +7.000 mm OK
+ins_chk_fit = +0.050 mm OK
+ins_chk_hv = +0.000 mm OK
+el_chk_aa = +2.050 mm OK
+el_chk_aa_w = +1.800 mm OK
+el_chk_cf = +2.500 mm OK
+el_chk_df = +2.200 mm OK
+el_chk_aa_len = +1.250 mm OK
+el_chk_ai_pack = +13.120 mm OK
+el_chk_cx_cav = +1.594 mm OK
+el_chk_under = +0.500 mm OK
+el_chk_flex = +0.201 mm OK
 
-━━ Robustness — 17 variants, one parameter at a time ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-17/17 variants clean; 0 broken (203 s CPU)
-
-━━ Static check — FusionBackend + PlasmaPenNexus.py vs adsk stub 2.0.12157 (pyright) 
-0 real problems, 3 verify-on-Fusion, 12 stub gaps
-verify on real Fusion (newer than the stub):
-  ? pp_core.py:443  FilletFeatureInput.edgeSetInputs (2023+)  — inp.edgeSetInputs.addConstantRadiusEdgeSet(coll, self.vi(radius), True)
-  ? pp_looks.py:368  Appearance.roughness (2025+, guarded by pp_looks._has_api)  — appearance.roughness = float(rough)
-  ? pp_looks.py:387  Appearance.color (2025+, guarded by pp_looks._has_api)  — appearance.color = _rgb(core, color, alpha)
-stub gaps / warnings (not errors):
-  · PlasmaPenNexus.py:148  Arguments missing for parameters "visible", "options"  [optional in the real API; the stub drops defaults]
-  · PlasmaPenNexus.py:150  Cannot assign to attribute "designType" for class "Design"   "int" is not assignable to "DesignTypes"  [stub enums are plain ints]
-  · PlasmaPenNexus.py:152  Cannot assign to attribute "distanceDisplayUnits" for class "FusionUnitsManager"   "int" is not assignable to "DistanceUnits"  [stub enums are plain ints]
-  · PlasmaPenNexus.py:216  Arguments missing for parameters "buttons", "icon"  [optional in the real API; the stub drops defaults]
-  · PlasmaPenNexus.py:219  Arguments missing for parameters "buttons", "icon"  [optional in the real API; the stub drops defaults]
-  · PlasmaPenNexus.py:225  Arguments missing for parameters "buttons", "icon"  [optional in the real API; the stub drops defaults]
-  · pp_core.py:218  Argument missing for parameter "occurrenceForCreation"  [optional in the real API; the stub drops defaults]
-  · pp_core.py:278  Argument of type "int" cannot be assigned to parameter "orientation" of type "DimensionOrientations" in function "addDistanceDimension"   "i  [stub enums are plain ints]
-  · pp_core.py:284  Argument of type "int" cannot be assigned to parameter "orientation" of type "DimensionOrientations" in function "addDistanceDimension"   "i  [stub enums are plain ints]
-  · pp_core.py:291  Argument missing for parameter "occurrenceForCreation"  [optional in the real API; the stub drops defaults]
-  · pp_core.py:462  "BRepEdges" is not iterable   "__iter__" method not defined  [stub collections lack __iter__; real Fusion collections iterate]
-  · pp_core.py:471  "BRepEdges" is not iterable   "__iter__" method not defined  [stub collections lack __iter__; real Fusion collections iterate]
-(typed copy in /var/folders/d2/hlsz4ljx57v2l442c093smmc0000gn/T/pp_static_p298xbl5)
-
-75 s
+23 s

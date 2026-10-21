@@ -9,6 +9,9 @@ Writes to tools/out/:
     b_cutaway_side.png  engineering assembly, looking straight at the cut face (parallel)
     c_cutaway_34.png    engineering assembly, 3/4 view
     d_section.png       XY section at z = 0 (engineering), line drawing with part labels
+    e_top.png           pen from straight above (display flat), parallel, pen-local frame
+    f_bottom.png        pen from straight below (dock flat), parallel
+    g_lying_34.png      pen lying on its side, 3/4 from the display side (product shot)
     preview.step        both assemblies, coloured, for reference
 
 Rendering: VTK offscreen (shipped with cadquery-ocp), OCC tessellation, studio light kit,
@@ -45,7 +48,20 @@ FALLBACK = {
     "oled_on": (236, 243, 255),
 }
 METALS = {"alu", "alu_dark", "shield", "copper", "gold", "steel"}
-CLEAR_ALPHA = {"glass_window": 0.38, "lens": 0.45, "petri": 0.22, "glass_black": 0.92}
+CLEAR_ALPHA = {"glass_window": 0.38, "lens": 0.45, "petri": 0.22}
+# VTK has no environment to reflect, so a metal drawn with its true f0 colour (what pp_looks
+# writes into Fusion) renders as white plastic. These are preview-only shading stand-ins for
+# what the Fusion appearances look like under a studio HDRI.
+PREVIEW_STYLE = {
+    # bead-blasted, clear-anodised 6063: mid silver, broad soft highlight
+    "alu": {"rgb": (168, 172, 178), "diffuse": 0.78, "spec": 0.42, "power": 9},
+    # 0.7 mm aluminosilicate over a switched-off AMOLED: glossy black
+    "glass_black": {"rgb": (12, 13, 16), "opacity": 1.0, "diffuse": 0.9, "spec": 0.85,
+                    "power": 90},
+    # bead-blasted optical PC light guide: cool frosted grey, a little translucent
+    "glass_frost": {"rgb": (206, 210, 216), "opacity": 0.94, "diffuse": 0.85, "spec": 0.12,
+                    "power": 6},
+}
 
 
 def look_style(key):
@@ -60,13 +76,19 @@ def look_style(key):
     alpha = spec.get("alpha", 255) / 255.0
     if key in CLEAR_ALPHA:
         alpha = min(alpha, CLEAR_ALPHA[key])
-    return {
+    out = {
         "rgb": tuple(c / 255.0 for c in rgb),
         "opacity": alpha,
         "metal": key in METALS,
         "emissive": spec.get("luminance") is not None,
         "rough": spec.get("roughness", 0.3 if key in METALS else 0.5),
     }
+    ps = PREVIEW_STYLE.get(key)
+    if ps:
+        out["rgb"] = tuple(c / 255.0 for c in ps["rgb"])
+        out["opacity"] = ps.get("opacity", out["opacity"])
+        out["shade"] = (ps["diffuse"], ps["spec"], ps["power"])
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,7 +99,8 @@ def tess(shape, m):
     bb = shape.BoundingBox()
     size = max(bb.xlen, bb.ylen, bb.zlen, 1e-3)
     tol = max(0.005, min(0.05, size / 600))
-    verts, tris = shape.tessellate(tol, 0.12)
+    # long shells catch long reflections: they need a fine angular step, small parts do not
+    verts, tris = shape.tessellate(tol, 0.04 if size > 60 else 0.12)
     v = np.array([(p.x, p.y, p.z) for p in verts], dtype=float)
     t = np.array(tris, dtype=np.int64).reshape(-1, 3)
     if m is not None and len(v):
@@ -117,7 +140,13 @@ def make_actor(pd, look, edges=False):
     p.SetColor(*st["rgb"])
     p.SetOpacity(st["opacity"])
     p.SetInterpolationToPhong()
-    if st["emissive"]:
+    if st.get("shade"):
+        p.SetAmbient(0.10)
+        p.SetDiffuse(st["shade"][0])
+        p.SetSpecular(st["shade"][1])
+        p.SetSpecularPower(st["shade"][2])
+        p.SetSpecularColor(1, 1, 1)
+    elif st["emissive"]:
         p.SetAmbient(0.85)
         p.SetAmbientColor(*st["rgb"])
         p.SetDiffuse(0.35)
@@ -337,6 +366,40 @@ def cut_side(bk, res, path, scale):
                   scale=scale)
 
 
+def pen_local(bk, res):
+    """Pen bodies of the render assembly in pen-local coordinates (X = axis, Y = display)."""
+    out = []
+    for b, _, _ in bk.iter_bodies(res.render):
+        if b.pen:
+            v, t = tess(b.shape, None)
+            out.append((v, t, b.look or "peek"))
+    return out
+
+
+def flat_views(bk, res, path_top, path_bot, scale):
+    scene = pen_local(bk, res)
+    if not scene:
+        return None, None
+    a = render(scene, path_top, (2400, 520), {"dir": (0, 1, 0), "up": (0, 0, -1),
+                                              "margin": 1.04}, parallel=True, edges=True,
+               scale=scale)
+    b = render(scene, path_bot, (2400, 520), {"dir": (0, -1, 0), "up": (0, 0, 1),
+                                              "margin": 1.04}, parallel=True, edges=True,
+               scale=scale)
+    return a, b
+
+
+def lying_34(bk, res, path, scale):
+    scene = pen_local(bk, res)
+    if not scene:
+        return None
+    d = (-0.42, 0.62, 0.66)
+    return render(scene, path, (2400, 1000), {"dir": d, "up": (0, 1, 0), "zoom": 1.55,
+                                              "fov": 12},
+                  scale=scale, bg=((1, 1, 1), (0.955, 0.955, 0.965)), ssao=True,
+                  light={"key": 1.0, "fill": 2.2, "back": 1.6, "elev": 40, "az": 28})
+
+
 def cut_34(bk, res, path, scale):
     scene = collect(bk, res.engineering)
     if not scene:
@@ -510,6 +573,9 @@ def main():
         cut_side(bk, res, os.path.join(OUT, "b_cutaway_side.png"), a.scale),
         cut_34(bk, res, os.path.join(OUT, "c_cutaway_34.png"), a.scale),
         section(bk, res, os.path.join(OUT, "d_section.png")),
+        *flat_views(bk, res, os.path.join(OUT, "e_top.png"), os.path.join(OUT, "f_bottom.png"),
+                    a.scale),
+        lying_34(bk, res, os.path.join(OUT, "g_lying_34.png"), a.scale),
     ]
     if not a.no_step:
         outs.append(export_step(bk, res, os.path.join(OUT, "preview.step")))

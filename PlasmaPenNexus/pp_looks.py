@@ -65,14 +65,35 @@ LOOKS = {
                   ["aluminum", "anodized"], ["aluminum - satin"]] + _METAL,
         "color": (62, 64, 68),
     },
+    # Nose cone + HV liner: PEEK compounded to the anodised silver (TiO2-based grey, no carbon
+    # black: it must stay an insulator). Tone-on-tone with the housing, so the violet glass ring
+    # is the only accent and the nose reads as the front of the body, not a black speculum.
     "peek": {
-        "label": "PEEK fekete",
-        "match": [["plastic - matte (black)"], ["plastic", "matte", "black"],
-                  ["plastic", "black"], ["powder coat", "black"]] + _OPAQUE,
-        "color": (20, 20, 21),
+        "label": "PEEK ezüstszürke",
+        "match": [["plastic - matte (gray)"], ["plastic", "matte", "gr"], ["plastic", "gr"]]
+        + _OPAQUE,
+        "color": (138, 141, 147),
         "roughness": 0.42,
     },
+    # Insert: ULTEM-type PEI, natural amber, translucent — reads as "the inner part" in the cutaway.
+    "pei": {
+        "label": "PEI borostyán",
+        "match": [["plastic - translucent glossy (yellow)"], ["plastic", "translucent", "yellow"],
+                  ["phenolic (amber)"], ["plastic", "translucent"]] + _OPAQUE,
+        "color": (196, 132, 46),
+        "roughness": 0.3,
+        "alpha": 210,
+    },
     # ── glass ───────────────────────────────────────────────────────────────
+    # End cap: bead-blasted optical PC light guide; the status LED behind it lights the whole cap.
+    "glass_frost": {
+        "label": "Matt üveghatás",
+        "match": [["glass - frosted"], ["glass", "frosted"], ["acrylic (frosted)"],
+                  ["polycarbonate (frosted)"], ["plastic - translucent matte (white)"],
+                  ["plastic", "translucent", "white"]] + _CLEAR,
+        "color": (236, 238, 240),
+        "roughness": 0.55,
+    },
     "glass_window": {
         "label": "Üveg ibolya",
         "match": [["glass (clear)"], ["acrylic (clear)"], ["polycarbonate (clear)"],
@@ -226,6 +247,8 @@ MATERIALS = {
     "peek": [["peek"], ["polyetheretherketone"], ["paek"], ["polyether"], ["polycarbonate"],
              ["acrylic"], ["plastic"]],
     "glass": [["glass"], ["acrylic"], ["polycarbonate"], ["plastic"]],
+    # Insert: polyetherimide (ULTEM 1000, 1.27 g/cm³); PC is the nearest library fallback.
+    "pei": [["polyetherimide"], ["pei"], ["ultem"], ["polycarbonate"], ["plastic"]],
     "plastic": [["abs plastic"], ["abs"], ["polycarbonate"], ["nylon"], ["plastic"]],
     "steel": [["stainless steel"], ["steel"], ["iron"]],
     "copper": [["copper"], ["brass"], ["bronze"]],

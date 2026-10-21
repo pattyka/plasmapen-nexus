@@ -1,0 +1,66 @@
+--- a/pp_head.py	2026-10-21 18:24:24
++++ b/pp_head.py	2026-10-21 18:24:24
+@@ -95,6 +95,8 @@
+     ("head_spig_x1", "body_x0 + nose_spigot", "mm", "= orrkúp csap vége"),
+     # ── optics chamber ──
+     ("head_win_land", "0.4 mm", "mm", "PEEK perem az üveggyűrű két szélén (ragasztás)"),
++    ("head_sh_land", "0.6 mm", "mm", "PEEK sáv az üveggyűrű külső széle és a váll íve között"),
++    ("head_sh_len", "4 mm", "mm", "Váll íve: ennyi mm-en simul a gallérba (X)"),
+     ("head_ws0", "win_r0 + head_win_land", "mm", "= kamra eleje belül (üveg mögött)"),
+     ("head_ws1", "win_r1 - head_win_land", "mm", "= kamra eleje kívül (üveg mögött)"),
+     ("head_collar_wall", "0.9 mm", "mm", "PEEK fal a gallérban a kamra fölött"),
+@@ -186,10 +188,33 @@
+ # ─────────────────────────────────────────────────────────────────────────────
+ # Profiles (module level so tools can draw them)
+ # ─────────────────────────────────────────────────────────────────────────────
++
++def shoulder_fit():
++    """Glass face → collar as one curve: a quadratic Bezier (a parabola) tangent to the face
++    line at r = win_r1 + head_sh_land and to the collar line head_sh_len behind face_x1, its
++    control point the old corner (face_x1, nose_r1). Fit points from the collar end to the face
++    (profile order)."""
++    r0 = "win_r1 + head_sh_land"
++    p0 = (x_face(r0), r0)
++    p1 = ("face_x1", "nose_r1")
++    p2 = ("face_x1 + head_sh_len",
++          "nose_r1 + (body_r0 - nose_r1) * head_sh_len / (nose_split - joint_ch - face_x1)")
++    pts = []
++    for k in range(1, 9):
++        t = 1 - k / 8
++        a, b, c = (1 - t) ** 2, 2 * t * (1 - t), t * t
++        if k == 8:
++            pts.append(p0)
++        else:
++            pts.append((f"{a:.6f} * ({p0[0]}) + {b:.6f} * ({p1[0]}) + {c:.6f} * ({p2[0]})",
++                        f"{a:.6f} * ({p0[1]}) + {b:.6f} * ({p1[1]}) + {c:.6f} * ({p2[1]})"))
++    return p2, pts
+ 
++
+ def nose_profile():
+     """Half-section of the nose cone, y ≥ 0. Segment order: front face → nozzle → socket →
+     spigot → shadow-gap face → collar → glass face + recess → beak."""
++    sh_end, sh_fit = shoulder_fit()
+     return [
+         ("0 mm", f"{NOZZLE_R} + head_noz_ch"),
+         ("head_noz_ch", NOZZLE_R),                                  # nozzle mouth break
+@@ -200,7 +225,8 @@
+         ("nose_split", "head_spig_r"),                              # spigot
+         ("nose_split", "body_r0 - joint_ch"),                       # shadow-gap face
+         ("nose_split - joint_ch", "body_r0"),                       # joint chamfer
+-        ("face_x1", "nose_r1"),                                     # collar
++        sh_end,                                                     # collar
++        ("spline", sh_fit),                                         # shoulder into the face
+         (x_face("win_r1"), "win_r1"),                               # face, outer land
+         (x_glass("win_r1"), "win_r1"),                              # recess outer wall
+         (x_glass("win_r0"), "win_r0"),                              # recess floor
+--- a/pp_params.py	2026-10-21 18:24:24
++++ b/pp_params.py	2026-10-21 18:24:24
+@@ -70,7 +70,7 @@
+     ("win_t", "1 mm", "mm", "Üveggyűrű vastagság (a felületre merőlegesen)"),
+     ("win_tx", "win_t * sqrt(1 + face_k ^ 2) / face_k", "mm", "= üveggyűrű vastagsága X irányban"),
+     ("win_r0", "face_r0 + 0.4 mm", "mm", "Üveggyűrű belső sugara"),
+-    ("win_r1", "nose_r1 - 1 mm", "mm", "Üveggyűrű külső sugara"),
++    ("win_r1", "nose_r1 - 1.6 mm", "mm", "Üveggyűrű külső sugara (a váll íve előtt)"),
+     ("nose_split", "38 mm", "mm", "Orrkúp | ház illesztés (az orrkúp hátsó homloka)"),
+     ("nose_gap", "0.4 mm", "mm", "Árnyékrés az illesztésen = levegő beszívás"),
+     ("nose_spigot", "3 mm", "mm", "Orrkúp csapja a ház furatában (az illesztés mögött)"),

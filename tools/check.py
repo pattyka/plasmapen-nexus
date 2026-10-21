@@ -8,9 +8,9 @@ Options:
     --no-robust       skip parameter robustness
     --no-static       skip the pyright check of pp_core.FusionBackend / PlasmaPenNexus.py
     --all-lengths     robustness on every literal length parameter ±15 % (PARAMS and the
-                      modules' EXTRA_PARAMS) instead of the default short list (body_od, tip_od,
-                      cone_len, cp_len, pcb_len, bat_len, standoff ±15 %, led_pairs 2/4,
-                      vent_count 8)
+                      modules' EXTRA_PARAMS) instead of the default list SUBSET below (real
+                      design alternatives: body Ø, CeraPlas F instead of HF, 18650 cell, thumb
+                      position, standoff, shape) plus led_pairs 2/4
     --only pp_head    restrict to some modules (comma separated)
     -j N              robustness worker processes (default: min(4, CPU count - 1))
 
@@ -46,9 +46,20 @@ STUB = "/tmp/pp_adsk/adsk-2.0.12157"
 MASS_TARGET = 280.0
 TOUCH_TOL = 0.01      # mm³ — overlaps below this count as "designed to touch"
 
-SUBSET = [("body_od", None), ("tip_od", None), ("cone_len", None), ("cp_len", None),
-          ("pcb_len", None), ("bat_len", None), ("standoff", None)]
-COUNT_VARIANTS = [("led_pairs", "2"), ("led_pairs", "4"), ("vent_count", "8")]
+# Default robustness set: each entry is one model rebuild with these overrides. They are the
+# design alternatives REVISION 4 must survive (BRIEF.md); outside them a chk_* goes negative on
+# purpose (e.g. body_od < 35 mm: the OV5640 no longer fits under the collar).
+SUBSET = [
+    {"body_od": "35 mm"}, {"body_od": "38 mm"},
+    {"cp_len": "70.6 mm", "cp_w": "6 mm", "body_od": "37 mm"},   # CeraPlas F instead of HF
+    {"bat_d": "18.55 mm", "bat_len": "65.25 mm"},                 # 18650 cell
+    {"thumb_x": "58 mm"}, {"thumb_x": "70 mm"},
+    {"standoff": "9 mm"}, {"standoff": "12 mm"},
+    {"nose_split": "37 mm"}, {"nose_split": "39 mm"},
+    {"max_frac": "0.5"}, {"max_frac": "0.65"},
+    {"oled_len": "44 mm", "oled_act_len": "37 mm"},
+]
+COUNT_VARIANTS = [("led_pairs", "2"), ("led_pairs", "4")]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,28 +119,32 @@ def radial_extent(shape):
             float(np.abs(a[:, 1]).max()), float(np.abs(a[:, 2]).max()))
 
 
-# Internals that sit outside the bore by design: the AMOLED panel lies in the unibody wall
-# pocket under the display glass and its FPC drops through the pocket opening; the antenna
-# coax runs in the groove along the bottom of the bore (pp_body cuts all three).
-# Interference against the unibody is still checked for them.
-OUTSIDE_BORE_OK = {'OLED 1,1"', "BLE antenna"}
+# pp_electronics components that sit outside the housing bore by design: the AMOLED panel lies
+# in the wall pocket under the cover glass; the dock contacts, magnets, dock board and the BLE
+# antenna live in the end cap (behind body_end). Interference is still checked for them.
+OUTSIDE_BORE_OK = {'AMOLED 1,91"', "Dokk NYÁK", "Dokk érintkezők", "Mágnesek", "BLE antenna"}
 
 
 def bore_violations(bk, res):
-    """Internals volume outside the bore cylinder + any pen body outside the silhouette.
-    Shapes are compared in pen-local coordinates (component space)."""
+    """pp_electronics volume outside the housing bore (circle bore_r cut by the flats bore_top /
+    −bore_bot) + any pen body outside the silhouette. Pen-local coordinates (component space)."""
     ev = bk.ev
     bore = ev.length("bore_r")
+    b_top = ev.length("bore_top")
+    b_bot = ev.length("bore_bot")
     body_r = ev.length("body_r")
     proud = ev.length("btn_proud")
     pen_len = ev.length("pen_len")
     cyl = cq.Solid.makeCylinder(bore, pen_len + 400, cq.Vector(-200, 0, 0), cq.Vector(1, 0, 0))
+    slab = cq.Solid.makeBox(pen_len + 400, b_top + b_bot, 2 * bore + 2,
+                            cq.Vector(-200, -b_bot, -bore - 1))
+    cyl = cyl.intersect(slab)
     out_bore, out_sil = [], []
     for b, _, _ in bk.iter_bodies(res.render):
         if not b.pen:
             continue
         rmax, x0, x1, ymax, zmax = radial_extent(b.shape)
-        if b.module == "pp_internals" and b.comp.name not in OUTSIDE_BORE_OK:
+        if b.module == "pp_electronics" and b.comp.name not in OUTSIDE_BORE_OK:
             try:
                 v = abs(b.shape.cut(cyl).Volume())
             except Exception:
@@ -161,7 +176,7 @@ def mass_table(bk):
 
 
 def chk_params(bk):
-    return [(n, q.v) for n, q in bk.ev.q.items() if n.startswith("chk_")]
+    return [(n, q.v) for n, q in bk.ev.q.items() if n.startswith("chk_") or "_chk_" in n]
 
 
 def short_errors(res, imp_err, perr):
@@ -182,8 +197,10 @@ def short_errors(res, imp_err, perr):
 def _variant(args):
     name, expr, only, base_pairs = args
     t = time.time()
-    bk, res, mods, imp_err, perr = build(only, {name: expr})
-    out = {"name": name, "expr": expr, "errors": short_errors(res, imp_err, perr),
+    overrides = dict(expr) if isinstance(expr, dict) else {name: expr}
+    bk, res, mods, imp_err, perr = build(only, overrides)
+    out = {"name": name, "expr": "" if isinstance(expr, dict) else expr,
+           "errors": short_errors(res, imp_err, perr),
            "warnings": [], "chk": [], "new_hits": [], "out_bore": [], "secs": 0.0}
     if bk is not None:
         out["warnings"] = list(bk.warnings)
@@ -205,7 +222,9 @@ def variants(bk, subset):
     lit = re.compile(r"^\s*(-?[0-9]*\.?[0-9]+)\s*mm\s*$")
     out = []
     if subset:
-        names = [n for n, _ in SUBSET]
+        for ov in SUBSET:
+            out.append((", ".join(f"{k}={v}" for k, v in ov.items()), ov))
+        return out + COUNT_VARIANTS
     else:
         names = []
         for n, expr, unit, _ in pb.PARAMS:
@@ -488,7 +507,7 @@ def main():
     R.h("Bore / silhouette")
     ob, osil, bore, body_r, pen_len = bore_violations(bk, res)
     if not ob:
-        R(f"internals: all inside the bore (r ≤ {bore:g} mm)")
+        R(f"electronics: all inside the bore (r ≤ {bore:g} mm, between the bore flats)")
     for v, rmax, b in ob:
         R(f"  internals outside bore: {label(b)}  {v:.3f} mm³ outside, r_max {rmax:.2f} "
           f"(bore {bore:g})")
@@ -507,6 +526,9 @@ def main():
     R("by material: " + ", ".join(f"{k} {v:.1f}" for k, v in sorted(by_mat.items(),
                                                                     key=lambda kv: -kv[1])))
     R("heaviest: " + ", ".join(f"{label(b)} {g:.1f}" for g, b in rows[:8]))
+    if total > 0:
+        com = sum(g * b.shape.Center().x for g, b in rows) / total
+        R(f"centre of mass x = {com:.1f} mm from the nozzle (BRIEF: 95 … 125, under the hand)")
     if nomat:
         R(f"no material (Fusion falls back to its default, usually Steel — mass wrong): "
           + ", ".join(label(b) for b in nomat))
@@ -543,7 +565,7 @@ def main():
             if not bad and not new_w:
                 continue
             fails += 1 if bad else 0
-            R(f"{'✗' if bad else '·'} {r['name']} = {r['expr']}")
+            R(f"{'✗' if bad else '·'} {r['name']}" + (f" = {r['expr']}" if r["expr"] else ""))
             for mod, stage, msg in r["errors"]:
                 R(f"    {mod}.{stage}: {msg[:300]}")
             for n, v in r["chk"]:
@@ -554,7 +576,7 @@ def main():
                 R(f"    outside bore: {n} {v:.2f} mm³")
             for w in new_w[:4]:
                 R(f"    warn: {w[:200]}")
-        ok = [f"{r['name']}={r['expr']}" for r in results if not (
+        ok = [r["name"] for r in results if not (
             r["errors"] or r["chk"] or r["new_hits"] or r["out_bore"])]
         R(f"{len(ok)}/{len(results)} variants clean; {fails} broken "
           f"({sum(r['secs'] for r in results):.0f} s CPU)")

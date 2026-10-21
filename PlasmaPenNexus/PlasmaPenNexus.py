@@ -6,7 +6,9 @@ Every run opens a NEW design; nothing existing is touched.
 One design, two assemblies:
     PlasmaPen Nexus — működés     pen pointing down at an agar plate, plasma on, LEDs glowing
     PlasmaPen Nexus — engineering same pen lying flat, shells cut in half, internals visible
-Internal parts are shared components, so both assemblies always show the same hardware.
+Shells (alu housing, end cap, cover glass, PEEK nose cone, HV liner, PEI insert) are built twice,
+the second time cut at z = 0. Everything else (boards, cell, piezo, display, optics) is a shared
+component, so both assemblies always show the same hardware.
 Edit anything in Modify → Change Parameters; both assemblies follow.
 """
 
@@ -25,7 +27,16 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 # Reload order matters: pp_core does `from pp_params import PARAMS`.
-_MODULES = ["pp_params", "pp_core", "pp_looks", "pp_head", "pp_body", "pp_internals", "pp_scene"]
+_MODULES = ["pp_params", "pp_core", "pp_looks", "pp_shell", "pp_head", "pp_insert",
+            "pp_electronics", "pp_scene"]
+# Builder order. EXTRA_PARAMS are added in this order, so a module may only reference its own
+# names and pp_params. build_shell(bk, parent, cutaway) runs for the render and (cut) for the
+# engineering assembly; build_shared(bk, parent) runs once, its components get a second
+# occurrence in the engineering assembly.
+SHELL_MODULES = [("pp_shell", "Ház + kupak + üveg"), ("pp_head", "Orrkúp + HV bélés"),
+                 ("pp_insert", "Betét")]
+SHARED_MODULES = [("pp_shell", "Gomb"), ("pp_head", "Optika + piezo"),
+                  ("pp_insert", "Árnyékolás"), ("pp_electronics", "Elektronika")]
 
 RENDER_NAME = "PlasmaPen Nexus — működés"
 ENG_NAME = "PlasmaPen Nexus — engineering"
@@ -60,8 +71,7 @@ def _create_parameters(design, mods, log):
     from pp_core import ExprEval
 
     table = list(mods["pp_params"].PARAMS)
-    # pp_body first: pp_head reuses the unibody inner surface (body_* params).
-    for m in ("pp_body", "pp_head", "pp_internals", "pp_scene"):
+    for m in ("pp_shell", "pp_head", "pp_insert", "pp_electronics", "pp_scene"):
         table += list(getattr(mods[m], "EXTRA_PARAMS", []))
 
     params = design.userParameters
@@ -167,25 +177,22 @@ def run(context):
         render = bk.component(None, RENDER_NAME, t_render)
         eng = bk.component(None, ENG_NAME, t_eng)
 
-        head, body = mods["pp_head"], mods["pp_body"]
-        internals, scene = mods["pp_internals"], mods["pp_scene"]
-
-        _step(log, failures, "Fej", head.build_shell, bk, render, False)
-        progress.progressValue = 2
-        _step(log, failures, "Test + kupak", body.build_shell, bk, render, False)
+        for name, label in SHELL_MODULES:
+            if hasattr(mods[name], "build_shell"):
+                _step(log, failures, label, mods[name].build_shell, bk, render, False)
         progress.progressValue = 3
         shared = []
-        shared += _step(log, failures, "Optika (üveg, LED, kamera)", head.build_shared, bk, render)
-        progress.progressValue = 4
-        shared += _step(log, failures, "Kristály + gomb", body.build_shared, bk, render)
-        shared += _step(log, failures, "Belső alkatrészek", internals.build_shared, bk, render)
+        for name, label in SHARED_MODULES:
+            if hasattr(mods[name], "build_shared"):
+                shared += _step(log, failures, label, mods[name].build_shared, bk, render)
         progress.progressValue = 5
-        _step(log, failures, "Plazma + petri-csésze", scene.build_scene, bk, render)
+        _step(log, failures, "Plazma + petri-csésze", mods["pp_scene"].build_scene, bk, render)
         progress.progressValue = 6
 
         bk.count_mass = False
-        _step(log, failures, "Fej metszet", head.build_shell, bk, eng, True)
-        _step(log, failures, "Test metszet", body.build_shell, bk, eng, True)
+        for name, label in SHELL_MODULES:
+            if hasattr(mods[name], "build_shell"):
+                _step(log, failures, label + " metszet", mods[name].build_shell, bk, eng, True)
         progress.progressValue = 7
         for comp in shared:
             try:
@@ -200,9 +207,14 @@ def run(context):
         mass = bk.pen_mass_g()
         length = um.evaluateExpression("pen_len", "mm") * 10
         diameter = um.evaluateExpression("body_od", "mm") * 10
-        margin = um.evaluateExpression("chk_bore", "mm") * 10
+        checks = []
+        for i in range(design.userParameters.count):
+            p = design.userParameters.item(i)
+            if p.name.startswith("chk_") or "_chk_" in p.name:
+                checks.append((p.value * 10, p.name))
+        margin, worst = min(checks) if checks else (0.0, "")
         log(f"pen: {length:.1f} × Ø{diameter:.1f} mm, {mass:.0f} g (target 280 g), "
-            f"module clearance {margin:+.2f} mm")
+            f"tightest check {worst} {margin:+.2f} mm")
         progress.progressValue = 9
         progress.hide()
         progress = None
@@ -210,8 +222,9 @@ def run(context):
         log_path = os.path.join(HERE, "build_log.txt")
         log.save(log_path)
         head_line = f"{length:.0f} × Ø{diameter:.0f} mm · {mass:.0f} g · {n_params} paraméter"
-        if margin < 0:
-            head_line += f"\nA CeraPlas modul sarka {-margin:.2f} mm-rel kilóg a furatból."
+        bad = [n for v, n in checks if v < 0]
+        if bad:
+            head_line += "\nNegatív ellenőrzés (pp_params, chk_*): " + ", ".join(bad)
         if failures:
             ui.messageBox(head_line + "\n\nNem épült meg: " + ", ".join(failures) +
                           f"\n\nRészletek: {log_path}", "PlasmaPen Nexus")

@@ -1,4 +1,4 @@
-# PlasmaPen Nexus — paraméteres Fusion modell
+# PlasmaPen Nexus — paraméteres Fusion modell (4. változat)
 
 ## Futtatás
 1. Fusion → **Utilities → Add-Ins → Scripts and Add-Ins** → Scripts fül → **+** → válaszd ki a `PlasmaPenNexus/` mappát.
@@ -7,43 +7,59 @@
 
 Egy design, két assembly:
 - **PlasmaPen Nexus — működés**: a toll lefelé néz egy agaros Petri-csészére, plazma be, LED-ek világítanak.
-- **PlasmaPen Nexus — engineering**: ugyanaz a toll fekve, a héjak félbevágva, látszik minden belső alkatrész.
+- **PlasmaPen Nexus — engineering**: ugyanaz a toll fekve. A ház, a kupak, az üveg, az orrkúp, a HV bélés és a betét félbevágva, látszik minden belső alkatrész.
 
 A belső alkatrészek közös komponensek, így a kettő mindig ugyanazt a hardvert mutatja.
+
+## Felépítés
+- **Tok, 3 darab**: fekete PEEK orrkúp az üveggyűrűvel, eloxált alu ház (extrudált cső, kívül esztergálva), matt PC hátsó kupak (dokk, antenna, státuszfény).
+- **Betét (PEI)**: az orrkúppal együtt elölről csúszik a házba, a kupak hátul rögzíti.
+  - Elöl a plazma rekesz (piezo, plazma NYÁK, fúvó), galvanikusan leválasztva.
+  - Mögötte az AI rekesz, az akku és a dokk.
+  - A kettőt a B1 falon átmenő vezérlő híd köti össze (ISO7741 + leválasztó trafó).
 
 ## Szerkesztés
 **Modify → Change Parameters.** Minden méret ott van magyar kommenttel, és mindkét assembly követi.
 
-A `chk_` kezdetű sorok ellenőrzések, ezeknek ≥ 0-nak kell lenniük:
-- `chk_bore`: piezo ↔ bélés,
-- `head_chk_cam`: kamera falak,
-- `head_chk_hv`: 15 kV távolság.
+A `chk_` kezdetű sorok ellenőrzések, ezeknek ≥ 0-nak kell lenniük. A modulok saját ellenőrzései `shell_chk_`, `head_chk_`, `ins_chk_` és `el_chk_` előtaggal vannak. A legfontosabbak:
+- `chk_hv_*`: 20 mm a piezo kimenetétől minden vezetőig (alu élre 30 mm), a TDK előírása szerint.
+- `chk_cam_*`: a kamera befér a gallér alá, és rálát a láng széléig.
+- `chk_under`, `el_chk_under`: hely a NYÁK-ok alatt.
+- `chk_dock_*`: a dokk érintkezők és a mágnesek a kupak alsó síkján.
 
-A legfontosabbak: `body_od`, `flat_y` (a lapos oldal mélysége), `cone_len`, `swell_x1`, `back_od` (orsóforma), `tip_od`, `standoff`, `pcb_len`, `bat_d`/`bat_len`.
+A legfontosabb méretek:
+- `body_od`: legalább 35, a CeraPlas F-hez 37.
+- `thumb_x`: hüvelykujj, gomb, kijelző.
+- `cp_len`/`cp_w`: HF 45,2 × 4, F 70,6 × 6.
+- `bat_d`/`bat_len`: 21700 vagy 18650.
+- `max_frac`: a legvastagabb pont helye.
+- `standoff`, `top_y` (származtatott), `top_rise`.
 
-Egy paraméterváltás után a teljes idővonal újraszámol (~220 feature), ez 10–30 másodperc.
+Egy paraméterváltás után a teljes idővonal újraszámol.
 
 ## Render
 1. **Render workspace** → Scene Settings: környezet „Photo Booth”, háttér sima szín.
-2. A plazma, a LED-ek és a megvilágított folt emisszív anyagot kapott. **Local/Cloud render**-ben izzanak, a sima viewportban nem.
+2. A plazma, a LED-ek, a státuszfény és a megvilágított folt emisszív anyagot kapott. **Local/Cloud render**-ben izzanak, a sima viewportban nem.
 3. Kijelző: **Insert → Decal** →
-   - kép: `PlasmaPenNexus/assets/oled_ui.png`,
-   - felület: az „OLED aktív terület” test teteje,
-   - méret: 25,578 × 10,962 mm, arány zárva,
-   - a kép bal széle az orr felé.
+   - kép: `PlasmaPenNexus/assets/oled_ui.png` (álló, 240 × 536),
+   - felület: az „AMOLED aktív terület” test teteje,
+   - méret: 19,8 × 44,22 mm, arány zárva,
+   - a kép **teteje az orr felé** néz (a szünet gomb a hüvelykujjnál van).
 4. Engineering képhez nézz a metszett oldalra (front view).
 
 ## Ami eltér a pitch-től, és miért
-- **CeraPlas F csupasz piezo rúd** (72 × 6 × 2,8) a HF modul (47,3 × 20 × 20) helyett. A HF doboz miatt Ø32 alá nem lehetett menni.
-- **1,1" 126×294 színes AMOLED** a 0,96" OLED helyett. Keskeny csík, ráfér a lapos oldalra, és ki tudja rajzolni a kamera fluoreszcencia-térképét.
-- **ESP32-S3-MINI-1U + antenna a fekete PEEK kupakban.** Alu csőből a BLE jel nem jut ki.
-- **Mikroventilátor + szellőzők alul.** A „fúj”-hoz légáram kell, a BOM-ban nem volt benne.
-- **Tömeg ~248 g** (CadQuery becslés), a cél 280 g.
+- **CeraPlas HF** (45,2 × 4 × 2,75, 5 W) az F helyett. 25 mm-rel rövidebb a toll, a teljesítmény a pitch 5 W-os alsó határa. Az F 37 mm-es átmérővel befér.
+- **1,91" 240×536 érintős AMOLED** a 0,96" OLED helyett. Ez a legnagyobb panel, ami Ø36-on ráfér a lapos oldalra.
+- **Nincs USB-C.** Töltés és adat a 4 érintkezős dokkon át, a kupak alján. A kupak egyben a BLE antenna ablaka és a státuszfény.
+- **Két külön NYÁK**, galvanikus leválasztással: ISO7741 + SN6507 + trafó. A felhasználó felőli oldalon van minden, amit meg lehet fogni vagy dugni.
+- **Ø36 a minimum**, nem stílus. Alatta nem fér el az OV5640 kamera, a flex csatorna és a dokk.
+- **Tömeg ~225 g** (CadQuery becslés), a cél 280 g.
 
 ## Ellenőrzés Fusion nélkül
 ```
 uv run --python 3.12 --with cadquery --with matplotlib --with numpy python tools/check.py
 uv run --python 3.12 --with cadquery --with matplotlib --with numpy python tools/preview.py
 ```
-- `check.py`: ütközések, furatba férés, tömeg, 17 paraméter-variáns, és a Fusion API hívások statikus ellenőrzése.
+- `check.py`: ütközések, furatba férés, tömeg + súlypont, minden `chk_`, 15 tervváltozat, és a Fusion API hívások statikus ellenőrzése.
 - `preview.py`: képek a `tools/out/` mappába.
+- A kijelzőkép újragenerálása: `uv run --python 3.12 --with pillow --with numpy python PlasmaPenNexus/assets/make_oled_ui.py`

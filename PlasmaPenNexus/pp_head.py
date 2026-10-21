@@ -1,281 +1,446 @@
-"""PlasmaPen Nexus — PEEK nose + liner (shell) and the optics behind the nose window (shared).
+"""PlasmaPen Nexus — Package H, front of the cartridge: PEEK nose cone, HV liner, optics, piezo.
 
-Frame: X = pen axis, x = 0 nozzle face, +X toward the back. Y = up (facet, camera side),
-Z = side. Angles around X run from +Y toward +Z.
+    build_shell(bk, parent, cutaway)  "Orrkúp (PEEK)", "HV bélés (PEEK)"   (cut in half if cutaway)
+    build_shared(bk, parent)          "Üveggyűrű", "LED 405 nm", "LED 660 nm", "Kamera (OV5640)",
+                                      "CeraPlas HF"
 
-Shell: ONE PEEK part, "Orr + bélés (PEEK)", one revolve of a single closed half-section.
-  · x 0 … nose_len   the visible black nose: a slight taper from head_nose_r0 at the face to
-                     tip_r where it enters the alu (so it reads as a drawn-out tip, not a plug),
-                     0.5 mm round on the face edge. Face: PEEK collar r nozzle_d/2 … collar_r,
-                     window recess r collar_r … win_ro × win_t, PEEK rim r win_ro … head_nose_r0.
-  · behind it        the outside follows the unibody's inner surface (pp_body.inner_profile_pts)
-                     head_alu_c inside it, back to head_len, so the liner slides in from the back
-                     and fills the taper.
-  · inside           nozzle bore r nozzle_d/2 to nozzle_len, funnel to liner_ri at funnel_x1,
-                     liner bore r liner_ri open at the back (piezo leads, air).
-Pockets for the camera and the LEDs are cut into the recess floor (x = win_t), so every optical
-part sits directly behind the glass.
+Frame of pp_params: X = pen axis (x = 0 nozzle face, +X back), Y = up (display flat, camera at
+θ = 0), Z = side. Every part here is non-conductive or sits ≥ hv_clear from the piezo's output
+end (TDK: nothing conductive within 20 mm of it).
 
-Camera pocket in two steps: a round lens bore (Ø cam_d + 2·head_fit) the full pocket depth and
-the square module seat (cam_mod + 2·head_fit) at its back, placed as far back as the funnel
-allows while keeping head_cam_wall under the seat (head_cam_x1_funnel), and never in front of
-the LED pockets. head_chk_cam ≥ 0 says the seat corners also keep head_cam_wall to the outside;
-it is measured against head_out_r, the smallest radius the PEEK outside has from the seat front
-back (the nose taper there, or tip_r: behind nose_len the outside follows the alu, which only
-opens up), so it holds wherever the seat lands.
+Nose cone, one revolve (y ≥ 0): nozzle bore, the slim beak (straight cone tip_r0 → face_r0; where a
+thicker liner (CeraPlas F) would leave less than head_beak_min of wall at the liner's front, the
+beak line bends out at liner_x0 to head_beak_r1 instead of thinning — the tip and the camera's
+view past it stay as they are, head_chk_beak_view; a 45° break at the front edge and at the
+nozzle mouth, both in the profile), the 61° glass
+chamfer face with its recess, the collar with joint_ch at the shadow gap, and the spigot that
+enters the housing bore. Then: the spigot is cut to the bore's double-D, three air grooves run
+through it (θ = ±90° and 180°, never near the A tunnel at θ = 0), the optics chamber behind the
+glass is cut as a second revolve, and a slot carries the camera/LED flex from the chamber to the
+insert's A tunnel.
 
-Wiring (camera + LEDs → main PCB): an axial channel at θ = 0 inside the liner wall, from the
-camera seat to the back face. Its top is derived from head_out_r — the smallest outside radius
-the PEEK has anywhere along the channel — so it can never break through to the alu or the nose,
-whatever the unibody profile does. HV rule (air ~3 kV/mm, PEEK ~20 kV/mm vs 15 kV):
-channel ↔ bar ≥ head_hv_total with ≥ head_hv_peek of it solid PEEK; head_chk_hv ≥ 0 says so.
+Optics chamber: behind the glass's back face, with a head_win_land ledge at both glass edges so
+the ring is bonded on PEEK all round. Its floor is cam_peek of PEEK over the liner socket; its
+outer wall head_collar_wall under the collar; its rear wall head_cav_wall before the joint.
 
-LED seeds sit at θ = +180°/(2·led_pairs) (405 nm) and θ = −180°/(2·led_pairs) (660 nm). The
-mirrored 660 nm seed is the same set of positions as 3·180°/(2·led_pairs) after patterning, but
-its sketch centre never lands on the sketch X axis (cos θ > 0, sin θ ≠ 0 for every
-led_pairs ≥ 2), so changing led_pairs in Fusion cannot leave a zero-pinned point behind.
+Camera: the OV5640 module is a lens barrel (head_cam_lb long, Ø 2·head_cam_rb) on a square body
+(cam_mod × cam_mod, cam_depth − head_cam_lb deep, the last head_cam_pcb of it the sensor board),
+tilted cam_tilt toward the axis about Z. Its lowest corner rests head_fit above the chamber
+floor; along X it sits as far forward as the glass allows — both the barrel's top edge and the
+body's top front corners keep head_fit behind the glass / ledge — but never nearer than
+hv_clear + head_hv_margin to the piezo's output end (head_cam_xq). head_chk_cam_back
+and head_chk_cam_top say it still fits the chamber.
+
+LEDs: lens cylinders along X on led_ring_r, their front face head_fit behind the glass at their
+OUTER edge (the glass is conical, so the centre-based led_x of pp_params would put the outer half
+of each lens into the glass). Seeds at θ = +180°/(2·led_pairs) (405 nm) and θ = −180°/(2·led_pairs)
+(660 nm), patterned: same positions as alternating 405 / 660, and no seed centre ever lands on the
+sketch X axis.
 """
 
-from pp_body import inner_profile_pts
 from pp_core import neg
 
 
+def _p(e):
+    return f"({e})"
+
+
 def _max(a, b):
-    """max(a, b) in plain Fusion arithmetic (ExprEval has no max())."""
-    return f"(({a}) + ({b}) + abs(({a}) - ({b}))) / 2"
+    """max(a, b) in plain Fusion arithmetic (the preview evaluator has no max())."""
+    return f"({_p(a)} + {_p(b)} + abs({_p(a)} - {_p(b)})) / 2"
 
 
 def _min(a, b):
-    return f"(({a}) + ({b}) - abs(({a}) - ({b}))) / 2"
+    return f"({_p(a)} + {_p(b)} - abs({_p(a)} - {_p(b)})) / 2"
+
+
+def x_face(r):
+    """x of the chamfer face (front surface) at radius r."""
+    return f"face_x0 + ({_p(r)} - face_r0) / face_k"
+
+
+def x_glass(r):
+    """x of the glass ring's back face at radius r."""
+    return f"{x_face(r)} + win_tx"
+
+
+def beak_r(x):
+    return f"tip_r0 + (face_r0 - tip_r0) * {_p(x)} / face_x0"
+
+
+def _ledge(r):
+    return (f"head_ledge_x0 + ({_p(r)} - head_ws1) * (head_ledge_x1 - head_ledge_x0)"
+            f" / (head_cav_ro - head_ws1)")
+
+
+def chamber_front(r):
+    """x of the optics chamber's front boundary at radius r (glass back face, then the outer
+    ledge line)."""
+    return _max(x_glass(r), _ledge(r))
+
+
+def cam_pt(s, w):
+    """Point of the camera at distance s behind the body's front-bottom edge along the optical
+    axis and w above it (perpendicular), in the XY plane."""
+    return (f"head_cam_xq + {_p(s)} * head_ct - {_p(w)} * head_st",
+            f"head_cam_yq + {_p(s)} * head_st + {_p(w)} * head_ct")
 
 
 EXTRA_PARAMS = [
-    ("head_fit", "0.1 mm", "mm", "Illesztési hézag (sugárban) a zsebekben"),
-    ("head_alu_c", "body_nose_gap", "mm", "= PEEK ↔ alu hézag (sugárban), az orr nyílásával azonos"),
-    ("head_nose_taper", "0.2 mm", "mm", "Orr kúposság: ennyivel kisebb a sugár a homlokon"),
-    ("head_nose_r0", "tip_r - head_nose_taper", "mm", "= orr sugara a homloklapon"),
-    ("head_nose_fillet", "0.5 mm", "mm", "Orr homlokél lekerekítés"),
-    # ── kamera ──
-    ("head_cam_wall", "1 mm", "mm", "Min. PEEK fal a kamera fészek körül"),
-    ("head_cam_body_t", "2.5 mm", "mm", "OV5640 modul test vastagság (objektív nélkül)"),
-    ("head_cam_pcb_t", "0.5 mm", "mm", "Kamera szenzor NYÁK vastagság"),
-    ("head_cam_len", "head_cam_body_t + head_cam_pcb_t + 2 * head_fit", "mm",
-     "= modul fészek hossza"),
-    ("head_cam_x1_funnel",
-     "nozzle_len + (ring_r - cam_mod / 2 - head_fit - head_cam_wall - nozzle_d / 2)"
-     " * (funnel_x1 - nozzle_len) / (liner_ri - nozzle_d / 2)",
-     "mm", "= eddig hagy a tölcsér head_cam_wall falat a fészek alatt"),
-    ("head_cam_x0",
-     _max("head_cam_x1_funnel - head_cam_len", "win_t + led_h + 0.3 mm + head_cam_wall"),
-     "mm", "= kamera modul fészek eleje"),
-    ("head_cam_x1", _max("win_t + cam_depth", "head_cam_x0 + head_cam_len"), "mm",
-     "= kamera zseb hátulja"),
-    ("head_out_r", _min("tip_r", "head_nose_r0 + head_nose_taper * head_cam_x0 / nose_len"), "mm",
-     "= legkisebb külső PEEK sugár a kamera fészektől hátra"),
-    ("head_chk_cam",
-     "head_out_r - head_cam_wall - sqrt((ring_r + cam_mod / 2 + head_fit) ^ 2"
-     " + (cam_mod / 2 + head_fit) ^ 2)",
-     "mm", "ELLENŐRZÉS: kamera fészek sarka ↔ orr felület ≥ head_cam_wall, ≥ 0 kell"),
-    ("head_cam_rim", "0.5 mm", "mm", "Objektív perem a lencse körül"),
-    ("head_cam_glass_t", "0.5 mm", "mm", "Kamera fedőlencse vastagság"),
-    ("head_cam_recess", "0.3 mm", "mm", "Lencse besüllyesztése az objektív elejétől"),
-    # ── kábelcsatorna (kamera + LED → fő NYÁK), felül θ = 0 ──
-    ("head_wire_w", "4 mm", "mm", "Kábelcsatorna szélesség (Z) — hajtott FPC"),
-    ("head_wire_h", "1 mm", "mm", "Kábelcsatorna magasság (Y)"),
-    ("head_wire_cover", "0.5 mm", "mm", "Min. PEEK a csatorna sarka fölött"),
-    ("head_wire_y1", "sqrt((head_out_r - head_wire_cover) ^ 2 - (head_wire_w / 2) ^ 2)", "mm",
-     "= kábelcsatorna teteje"),
-    ("head_wire_y0", "head_wire_y1 - head_wire_h", "mm", "= kábelcsatorna alja"),
-    ("head_hv_total", "6 mm", "mm", "Előírt min. távolság csatorna ↔ piezo rúd (levegő + PEEK)"),
-    ("head_hv_peek", "1.2 mm", "mm", "Előírt min. tömör PEEK ebből (a csatorna alatt)"),
-    ("head_chk_hv",
-     _min("head_wire_y0 - cp_h / 2 - head_hv_total", "head_wire_y0 - liner_ri - head_hv_peek"),
-     "mm", "ELLENŐRZÉS: csatorna ↔ rúd ≥ head_hv_total és PEEK ≥ head_hv_peek, ≥ 0 kell"),
+    ("head_fit", "0.05 mm", "mm", "Illesztési hézag a fej alkatrészei között"),
+    ("head_tip_ch", "0.3 mm", "mm", "Csőr homlokélének letörése (45°)"),
+    ("head_noz_ch", "0.25 mm", "mm", "Fúvóka szájának letörése (45°)"),
+    ("head_sock_r", "liner_ro + 0.05 mm", "mm", "= bélés fészek sugara az orrkúpban"),
+    ("head_beak_min", "0.5 mm", "mm", "Min. PEEK fal a csőrben a bélés eleje fölött"),
+    ("head_beak_r1", _max(beak_r("liner_x0"), "head_sock_r + head_beak_min"), "mm",
+     "= csőr sugara a bélés elejénél: a csőr vonala, vagy kifelé tér, ha a bélés vastagabb"),
+    ("head_chk_beak_view",
+     "plume_r + (cam_y - plume_r) * (liner_x0 + standoff)"
+     " / (face_x0 + (cam_y - face_r0) / face_k + standoff) - head_beak_r1", "mm",
+     "ELLENŐRZÉS: a kamera rálátása a láng szélére a csőr töréspontja fölött is megvan"),
+    ("head_spig_r", "bore_r - 0.1 mm", "mm", "= orrkúp csap sugara"),
+    ("head_spig_x1", "body_x0 + nose_spigot", "mm", "= orrkúp csap vége"),
+    # ── optics chamber ──
+    ("head_win_land", "0.4 mm", "mm", "PEEK perem az üveggyűrű két szélén (ragasztás)"),
+    ("head_sh_land", "0.6 mm", "mm", "PEEK sáv az üveggyűrű külső széle és a váll íve között"),
+    ("head_sh_len", "4 mm", "mm", "Váll íve: ennyi mm-en simul a gallérba (X)"),
+    ("head_ws0", "win_r0 + head_win_land", "mm", "= kamra eleje belül (üveg mögött)"),
+    ("head_ws1", "win_r1 - head_win_land", "mm", "= kamra eleje kívül (üveg mögött)"),
+    ("head_collar_wall", "0.9 mm", "mm", "PEEK fal a gallérban a kamra fölött"),
+    ("head_cav_ro", "nose_r1 - head_collar_wall", "mm", "= optikai kamra külső sugara"),
+    ("head_cav_ri", "head_sock_r + cam_peek", "mm", "= optikai kamra padlója (cam_peek PEEK)"),
+    ("head_cav_wall", "0.5 mm", "mm", "Kamra hátfala az illesztés előtt"),
+    ("head_cav_x1", "nose_split - head_cav_wall", "mm", "= optikai kamra hátfala"),
+    ("head_ledge_x0", x_glass("head_ws1"), "mm", "= külső perem kezdete"),
+    ("head_ledge_x1", x_glass("win_r1") + " + head_win_land", "mm", "= külső perem vége"),
+    # ── camera ──
+    ("head_ct", "cos(cam_tilt)", "", "= kamera dőlés koszinusza"),
+    ("head_st", "sin(cam_tilt)", "", "= kamera dőlés szinusza"),
+    ("head_cam_lb", "2 mm", "mm", "Objektív kiállása a modul elé"),
+    ("head_cam_rb", "cam_ap / 2 + 0.5 mm", "mm", "= objektív külső sugara"),
+    ("head_cam_lm", "cam_depth - head_cam_lb", "mm", "= modul test hossza (tengely mentén)"),
+    ("head_cam_pcb", "1 mm", "mm", "Szenzor NYÁK a modul hátulján"),
+    ("head_cam_h", "cam_mod / 2", "mm", "= modul fél oldalhossza"),
+    ("head_cam_yq", "head_cav_ri + head_fit", "mm", "= modul legalsó éle (elöl lent)"),
+    ("head_cam_r1",
+     "head_cam_yq + head_cam_h * head_ct - head_cam_lb * head_st + head_cam_rb * head_ct",
+     "mm", "= objektív felső elülső éle (sugár)"),
+    ("head_cam_r2", "sqrt((head_cam_yq + 2 * head_cam_h * head_ct) ^ 2 + head_cam_h ^ 2)", "mm",
+     "= modul felső elülső sarka (sugár)"),
+    ("head_hv_margin", "0.25 mm", "mm", "Ráhagyás a 20 mm-es HV távolságon"),
+    ("head_cam_xq_glass",
+     _max(chamber_front("head_cam_r1") + " + head_fit + head_cam_rb * head_st"
+          " + head_cam_lb * head_ct + head_cam_h * head_st",
+          chamber_front("head_cam_r2") + " + head_fit + 2 * head_cam_h * head_st"),
+     "mm", "= legelső modulhelyzet: objektív és sarkok az üveg mögött"),
+    ("head_cam_xq_hv",
+     _max("cp_x0 + sqrt((hv_clear + head_hv_margin) ^ 2 - (head_cam_yq + head_cam_h * head_ct"
+          " - head_cam_lb * head_st - head_cam_rb * head_ct) ^ 2) - head_cam_rb * head_st"
+          " + head_cam_h * head_st + head_cam_lb * head_ct",
+          "cp_x0 + sqrt((hv_clear + head_hv_margin) ^ 2 - head_cam_yq ^ 2)"),
+     "mm", "= legelső modulhelyzet a piezo kimenetétől hv_clear-en túl"),
+    ("head_cam_xq", _max("head_cam_xq_glass", "head_cam_xq_hv"), "mm",
+     "= modul elülső alsó éle (x)"),
+    ("head_cam_xb", "head_cam_xq + head_cam_lm * head_ct", "mm", "= modul hátsó alsó éle (x)"),
+    ("head_cam_r3",
+     "sqrt((head_cam_yq + head_cam_lm * head_st + 2 * head_cam_h * head_ct) ^ 2"
+     " + head_cam_h ^ 2)", "mm", "= modul felső hátsó sarka (sugár)"),
+    ("head_chk_cam_back", "head_cav_x1 - head_fit - head_cam_xb", "mm",
+     "ELLENŐRZÉS: kamera modul a kamra hátfala előtt"),
+    ("head_chk_cam_top", "head_cav_ro - head_fit - head_cam_r3", "mm",
+     "ELLENŐRZÉS: kamera modul sarka a kamra külső fala alatt"),
+    ("head_cam_xa", "head_cam_xq - head_cam_h * head_st - head_cam_lb * head_ct", "mm",
+     "= objektív homloka (tengelyen, x)"),
+    ("head_cam_ya", "head_cam_yq + head_cam_h * head_ct - head_cam_lb * head_st", "mm",
+     "= objektív homloka (tengelyen, y)"),
+    ("head_chk_hv_cam",
+     _min("sqrt((head_cam_xa + head_cam_rb * head_st - cp_x0) ^ 2"
+          " + (head_cam_ya - head_cam_rb * head_ct) ^ 2)",
+          "sqrt((head_cam_xq - cp_x0) ^ 2 + head_cam_yq ^ 2)") + " - hv_clear",
+     "mm", "ELLENŐRZÉS: kamera legközelebbi pontja ↔ piezo kimenet ≥ hv_clear"),
+    ("head_chk_hv_plastic", "liner_wall + cam_peek - 2.5 mm", "mm",
+     "ELLENŐRZÉS: ≥ 2,5 mm tömör PEEK a piezo és a kamera között"),
+    # ── LEDs ──
+    ("head_led_x", x_glass("led_ring_r + led_d / 2") + " + head_fit", "mm",
+     "= LED homloka (a külső szélénél is az üveg mögött)"),
+    ("head_chk_led_win",
+     _min("head_ws1 - led_ring_r - led_d / 2", "led_ring_r - led_d / 2 - head_ws0"), "mm",
+     "ELLENŐRZÉS: LED-ek az üveggyűrű szabad része mögött"),
+    ("head_chk_led_cam",
+     "led_ring_r * sin(180 deg / (2 * led_pairs)) - led_d / 2 - cam_mod / 2 - head_fit", "mm",
+     "ELLENŐRZÉS: a kamera melletti LED nem ér a modulhoz (Z)"),
+    # ── air intake: shadow gap → spigot grooves → B0 ──
+    ("head_air_w", "4.5 mm", "mm", "Légcsatorna szélesség a csapon (3 db: ±90°, 180°)"),
+    ("head_air_d", "1.7 mm", "mm", "Légcsatorna mélység"),
+    ("head_chk_air",
+     "(2 * head_air_w * (sqrt(head_spig_r ^ 2 - (head_air_w / 2) ^ 2) - head_spig_r"
+     " + head_air_d) + head_air_w * head_air_d) / (1 mm) - 20 mm", "mm",
+     "ELLENŐRZÉS: légút keresztmetszete ≥ 20 mm² (érték mm²-ben)"),
+    # ── piezo mounting ──
+    ("head_clip_len", "2.4 mm", "mm", "PEEK tüsketartó hossza"),
+    ("head_cradle_len", "3 mm", "mm", "Szilikon bölcső hossza"),
+    ("head_cp_rd", "sqrt((cp_w / 2) ^ 2 + (cp_h / 2) ^ 2)", "mm", "= piezo fél-átlója"),
+    ("head_pin_y1", "pcb_y - pboard_t - 1 mm", "mm", "= tüskék alsó vége"),
 ]
 
-# ── shared expressions ───────────────────────────────────────────────────────
 NOZZLE_R = "nozzle_d / 2"
+TOP_CUT = "body_r + 2 mm"
 
-CAM_X1 = "head_cam_x1"                   # back of the camera pocket
-CAM_LENS_R = "cam_d / 2 + head_fit"      # lens bore radius
-CAM_SEAT = "cam_mod / 2 + head_fit"      # half side of the square module seat
-
-LED_X1 = "win_t + led_h"                 # LED lens back face
-LED_POCKET_X1 = "win_t + led_h + 0.3 mm"
-LED_POCKET_R = "led_d / 2 + head_fit"
-
-WIRE_HALF = "head_wire_w / 2"
-
-# θ of each LED seed (see module docstring for the mirrored 660 nm seed)
 LED_SEEDS = (
     ("405", "led405", "180 deg / (2 * led_pairs)"),
     ("660", "led660", "-(180 deg / (2 * led_pairs))"),
 )
 
 
-def _p(expr):
-    return f"({expr})"
+# ─────────────────────────────────────────────────────────────────────────────
+# Profiles (module level so tools can draw them)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def shoulder_fit():
+    """Glass face → collar as one curve: a quadratic Bezier (a parabola) tangent to the face
+    line at r = win_r1 + head_sh_land and to the collar line head_sh_len behind face_x1, its
+    control point the old corner (face_x1, nose_r1). Fit points from the collar end to the face
+    (profile order)."""
+    r0 = "win_r1 + head_sh_land"
+    p0 = (x_face(r0), r0)
+    p1 = ("face_x1", "nose_r1")
+    p2 = ("face_x1 + head_sh_len",
+          "nose_r1 + (body_r0 - nose_r1) * head_sh_len / (nose_split - joint_ch - face_x1)")
+    pts = []
+    for k in range(1, 9):
+        t = 1 - k / 8
+        a, b, c = (1 - t) ** 2, 2 * t * (1 - t), t * t
+        if k == 8:
+            pts.append(p0)
+        else:
+            pts.append((f"{a:.6f} * ({p0[0]}) + {b:.6f} * ({p1[0]}) + {c:.6f} * ({p2[0]})",
+                        f"{a:.6f} * ({p0[1]}) + {b:.6f} * ({p1[1]}) + {c:.6f} * ({p2[1]})"))
+    return p2, pts
+
+
+def nose_profile():
+    """Half-section of the nose cone, y ≥ 0. Segment order: front face → nozzle → socket →
+    spigot → shadow-gap face → collar → glass face + recess → beak."""
+    sh_end, sh_fit = shoulder_fit()
+    return [
+        ("0 mm", f"{NOZZLE_R} + head_noz_ch"),
+        ("head_noz_ch", NOZZLE_R),                                  # nozzle mouth break
+        ("nozzle_len", NOZZLE_R),                                   # nozzle bore
+        ("nozzle_len", "head_sock_r"),                              # liner seat
+        ("head_spig_x1", "head_sock_r"),                            # liner socket
+        ("head_spig_x1", "head_spig_r"),                            # spigot back face
+        ("nose_split", "head_spig_r"),                              # spigot
+        ("nose_split", "body_r0 - joint_ch"),                       # shadow-gap face
+        ("nose_split - joint_ch", "body_r0"),                       # joint chamfer
+        sh_end,                                                     # collar
+        ("spline", sh_fit),                                         # shoulder into the face
+        (x_face("win_r1"), "win_r1"),                               # face, outer land
+        (x_glass("win_r1"), "win_r1"),                              # recess outer wall
+        (x_glass("win_r0"), "win_r0"),                              # recess floor
+        (x_face("win_r0"), "win_r0"),                               # recess inner wall
+        ("face_x0", "face_r0"),                                     # face, inner land
+        ("liner_x0", "head_beak_r1"),                               # beak (follows the liner)
+        ("head_tip_ch", beak_r("head_tip_ch")),                     # beak
+        ("0 mm", "tip_r0 - head_tip_ch"),                           # front edge break
+    ]
+
+
+def chamber_profile():
+    """Optics chamber (cut), revolved about X."""
+    return [
+        (x_glass("head_ws0"), "head_ws0"),
+        ("head_ledge_x0", "head_ws1"),
+        ("head_ledge_x1", "head_cav_ro"),
+        ("head_cav_x1", "head_cav_ro"),
+        ("head_cav_x1", "head_cav_ri"),
+        (x_glass("head_ws0"), "head_cav_ri"),
+    ]
+
+
+def glass_profile():
+    return [
+        (x_face("win_r0"), "win_r0"),
+        (x_face("win_r1"), "win_r1"),
+        (x_glass("win_r1"), "win_r1"),
+        (x_glass("win_r0"), "win_r0"),
+    ]
+
+
+def liner_profile():
+    """HV liner half-section: 45° funnel from the nozzle bore, open at the back."""
+    return [
+        ("liner_x0", NOZZLE_R),
+        (f"liner_x0 + liner_ri - {NOZZLE_R}", "liner_ri"),
+        ("liner_x1", "liner_ri"),
+        ("liner_x1", "liner_ro"),
+        ("liner_x0", "liner_ro"),
+    ]
 
 
 def axial_rect(x0, x1, yc, r):
-    """Rectangle x0…x1 × yc…yc+r. Segment 0 lies on y = yc: revolve with axis=0 for a
-    cylinder of radius r whose axis is parallel to X through (yc, plane_z)."""
+    """Rectangle x0…x1 × yc…yc+r; segment 0 lies on y = yc (revolve axis=0 → cylinder)."""
     top = f"{_p(yc)} + {_p(r)}"
     return [(x0, yc), (x1, yc), (x1, top), (x0, top)]
 
 
+def vertical_rect(xc, r, y0, y1):
+    """Rectangle xc…xc+r × y0…y1; segment 3 lies on x = xc (revolve axis=3 → cylinder along Y)."""
+    return [(xc, y0), (f"{_p(xc)} + {_p(r)}", y0), (f"{_p(xc)} + {_p(r)}", y1), (xc, y1)]
+
+
+def camera_body_pts(s0, s1):
+    """Rotated rectangle of the camera body between axial distances s0 and s1."""
+    w = "2 * head_cam_h"
+    return [cam_pt(s0, "0 mm"), cam_pt(s1, "0 mm"), cam_pt(s1, w), cam_pt(s0, w)]
+
+
+def camera_axis_pts(s, w):
+    """Point on the camera's optical axis frame: s along the axis from the body front (negative
+    = in front of the body), w off the axis."""
+    return cam_pt(s, f"head_cam_h + {_p(w)}")
+
+
+def barrel_profile():
+    """Barrel: solid cylinder r head_cam_rb from its front to the body, with the aperture recess
+    (r cam_ap/2, 0.5 mm deep) in front. Segment 0 lies on the optical axis."""
+    lb = "-(head_cam_lb)"
+    rec = "-(head_cam_lb) + 0.5 mm"
+    return [
+        camera_axis_pts(rec, "0 mm"),
+        camera_axis_pts("0 mm", "0 mm"),
+        camera_axis_pts("0 mm", "head_cam_rb"),
+        camera_axis_pts(lb, "head_cam_rb"),
+        camera_axis_pts(lb, "cam_ap / 2"),
+        camera_axis_pts(rec, "cam_ap / 2"),
+    ]
+
+
+def filter_profile():
+    return [
+        camera_axis_pts("-(head_cam_lb) + 0.2 mm", "0 mm"),
+        camera_axis_pts("-(head_cam_lb) + 0.5 mm", "0 mm"),
+        camera_axis_pts("-(head_cam_lb) + 0.5 mm", "cam_ap / 2"),
+        camera_axis_pts("-(head_cam_lb) + 0.2 mm", "cam_ap / 2"),
+    ]
+
+
 def led_centre(theta):
-    """(y, z) expressions of an LED centre on the ring_r circle at angle theta."""
-    return f"ring_r * cos({theta})", f"ring_r * sin({theta})"
+    return f"led_ring_r * cos({theta})", f"led_ring_r * sin({theta})"
 
 
-def _inset(pt):
-    x, r = pt
-    return (x, f"{_p(r)} - head_alu_c")
+# ─────────────────────────────────────────────────────────────────────────────
+# Shells
+# ─────────────────────────────────────────────────────────────────────────────
 
+def _nose(bk, parent, cutaway):
+    comp = bk.component(parent, "Orrkúp (PEEK)")
+    nose = bk.revolve(comp, "Orrkúp", nose_profile(), look="peek", material="peek").body
 
-def liner_outside():
-    """The unibody's inner surface, head_alu_c inside it, walked from the back (head_len) to
-    the front (nose_len), as profile items. Splines are reversed point by point: a spline item
-    runs from the previous vertex through its points, so reversing moves the previous vertex
-    to the end."""
-    src = list(inner_profile_pts())
-    if not src or src[0][0] == "spline":
-        raise ValueError("inner_profile_pts() must start with a plain vertex")
-    # flatten to (kind, point) with kind "v" (vertex reached by a line) or "s<k>" (spline k)
-    seq = []
-    for k, item in enumerate(src):
-        if item[0] == "spline":
-            for p in item[1]:
-                seq.append((k, p))
-        else:
-            seq.append((None, item))
-    out = []
-    i = len(seq) - 1
-    out.append(_inset(seq[i][1]))
-    while i > 0:
-        k = seq[i][0]
-        if k is None:
-            out.append(_inset(seq[i - 1][1]))
-            i -= 1
-            continue
-        # walk back over spline k: its fit points (except the last, already emitted) and the
-        # vertex before it become one reversed spline
-        j = i
-        while j - 1 >= 0 and seq[j - 1][0] == k:
-            j -= 1
-        pts = [_inset(seq[m][1]) for m in range(i - 1, j - 1, -1)] + [_inset(seq[j - 1][1])]
-        out.append(("spline", pts))
-        i = j - 1
-    return out
+    # Spigot → the bore's double-D (only behind the joint; the collar stays round).
+    x0, x1 = "nose_split", "head_spig_x1 + 0.5 mm"
+    bk.box_sym(comp, "Csap felső sík", x0, x1, "bore_top - 0.1 mm", TOP_CUT, "body_od + 4 mm",
+               op="cut", targets=[nose])
+    bk.box_sym(comp, "Csap alsó sík", x0, x1, neg(TOP_CUT), "-(bore_bot - 0.1 mm)",
+               "body_od + 4 mm", op="cut", targets=[nose])
 
+    # Air grooves: shadow gap → behind the spigot → the insert's B0 slots.
+    hw = "head_air_w / 2"
+    side = bk.box(comp, "Légcsatorna", x0, x1, neg(hw), hw, "head_spig_r - head_air_d",
+                  TOP_CUT, op="cut", targets=[nose])
+    bk.pattern_x(comp, "Légcsatornák oldalt", side, "2")
+    bk.box_sym(comp, "Légcsatorna alul", x0, x1, neg(TOP_CUT),
+               "-(bore_bot - 0.1 mm - head_air_d)", "head_air_w", op="cut", targets=[nose])
 
-def shell_profile():
-    """Closed half-section of the PEEK nose + liner, y ≥ 0, revolved about X."""
-    return [
-        ("0 mm", NOZZLE_R),                              # collar inner edge
-        ("nozzle_len", NOZZLE_R),                        # nozzle bore
-        ("funnel_x1", "liner_ri"),                       # funnel
-        ("head_len", "liner_ri"),                        # liner bore, open at the back
-        *liner_outside(),                                # back face, then along the alu
-        ("0 mm", "head_nose_r0"),                        # nose, a slight taper to tip_r
-        ("0 mm", "win_ro"),                              # rim face
-        ("win_t", "win_ro"),                             # recess outer wall
-        ("win_t", "collar_r"),                           # recess floor
-        ("0 mm", "collar_r"),                            # recess inner wall → collar face
-    ]
-
-
-def camera_seat_box():
-    """(x0, x1, y0, y1, z0, z1) of the square module seat cut into the nose."""
-    return ("head_cam_x0", CAM_X1,
-            f"ring_r - {_p(CAM_SEAT)}", f"ring_r + {_p(CAM_SEAT)}",
-            neg(CAM_SEAT), CAM_SEAT)
-
-
-# ── camera stack (shared) ────────────────────────────────────────────────────
-CAM_FRONT = "win_t + head_fit"                               # barrel front, behind the glass
-CAM_GLASS_X0 = f"{CAM_FRONT} + head_cam_recess"
-CAM_GLASS_X1 = f"{CAM_GLASS_X0} + head_cam_glass_t"
-CAM_GLASS_R = "cam_d / 2 - head_cam_rim"
-CAM_BODY_X0 = "head_cam_x0 + head_fit"
-CAM_PCB_X1 = f"{CAM_X1} - head_fit"
-CAM_BODY_X1 = f"{CAM_PCB_X1} - head_cam_pcb_t"
-
-
-def camera_barrel_profile():
-    """Lens barrel: solid behind the glass, a rim around it in front. Segment 0 is the
-    camera axis (y = ring_r)."""
-    rin = f"ring_r + {_p(CAM_GLASS_R)}"
-    rout = "ring_r + cam_d / 2"
-    return [
-        (CAM_GLASS_X1, "ring_r"),
-        (CAM_BODY_X0, "ring_r"),
-        (CAM_BODY_X0, rout),
-        (CAM_FRONT, rout),
-        (CAM_FRONT, rin),
-        (CAM_GLASS_X1, rin),
-    ]
-
-
-# ── builders ─────────────────────────────────────────────────────────────────
-
-def build_shell(bk, parent, cutaway):
-    comp = bk.component(parent, "Orr + bélés (PEEK)")
-    peek = bk.revolve(comp, "Orr + bélés", shell_profile(), look="peek", material="peek").body
-
-    bk.fillet(comp, "Orr él", peek, [("circle", "0 mm", "head_nose_r0")],
-              "head_nose_fillet")
-
-    bk.revolve(comp, "Kamera furat", axial_rect("win_t", CAM_X1, "ring_r", CAM_LENS_R),
-               axis=0, op="cut", targets=[peek])
-    x0, x1, y0, y1, z0, z1 = camera_seat_box()
-    bk.box(comp, "Kamera fészek", x0, x1, y0, y1, z0, z1, op="cut", targets=[peek])
-
-    for colour, _look, theta in LED_SEEDS:
-        yc, zc = led_centre(theta)
-        cut = bk.revolve(comp, f"LED zseb {colour}",
-                         axial_rect("win_t", LED_POCKET_X1, yc, LED_POCKET_R),
-                         axis=0, plane_z=zc, op="cut", targets=[peek])
-        bk.pattern_x(comp, f"LED zsebek {colour}", cut, "led_pairs")
-
-    bk.box(comp, "Kábelcsatorna", "head_cam_x0", "head_len + 1 mm", "head_wire_y0",
-           "head_wire_y1", neg(WIRE_HALF), WIRE_HALF, op="cut", targets=[peek])
+    # Optics chamber behind the glass + the flex slot to the A tunnel.
+    bk.revolve(comp, "Optikai kamra", chamber_profile(), op="cut", targets=[nose])
+    bk.box_sym(comp, "Flex csatorna", "head_cav_x1 - 0.2 mm", x1, "tun_floor + tun_floor_t",
+               "sled_top_i", "tun_w", op="cut", targets=[nose])
 
     if cutaway:
-        bk.cut_half(comp, "Metszet", [peek])
-    return [comp]
+        bk.cut_half(comp, "Metszet", [nose])
+    return comp
+
+
+def _liner(bk, parent, cutaway):
+    comp = bk.component(parent, "HV bélés (PEEK)")
+    liner = bk.revolve(comp, "HV bélés", liner_profile(), look="peek", material="peek").body
+    r = "cp_pin_d / 2 + 0.15 mm"
+    for k, z in (("1", "cp_pin_z"), ("2", neg("cp_pin_z"))):
+        bk.revolve(comp, f"Tüske furat {k}",
+                   vertical_rect("cp_pin_x", r, "-(liner_ro + 0.5 mm)", "-(cp_h / 2)"),
+                   axis=3, plane_z=z, op="cut", targets=[liner])
+    if cutaway:
+        bk.cut_half(comp, "Metszet", [liner])
+    return comp
+
+
+def build_shell(bk, parent, cutaway):
+    return [_nose(bk, parent, cutaway), _liner(bk, parent, cutaway)]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared parts
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _camera(bk, parent):
+    comp = bk.component(parent, "Kamera (OV5640)")
+    bk.revolve(comp, "Objektív", barrel_profile(), axis=0, look="plastic_black",
+               material="plastic")
+    bk.revolve(comp, "Szűrő", filter_profile(), axis=0, look="lens", material="glass")
+    body_end = "head_cam_lm - head_cam_pcb"
+    h = "head_cam_h"
+    bk.extrude(comp, "Modul", camera_body_pts("0 mm", body_end), neg(h), h,
+               look="plastic_black", material="plastic")
+    bk.extrude(comp, "Szenzor NYÁK", camera_body_pts(body_end, "head_cam_lm"), neg(h), h,
+               look="pcb", material="fr4")
+    return comp
+
+
+def _piezo(bk, parent):
+    comp = bk.component(parent, "CeraPlas HF")
+    bk.box_sym(comp, "Piezo", "cp_x0", "cp_x1", "-(cp_h / 2)", "cp_h / 2", "cp_w",
+               look="ceramic", material="steel")
+    pin_r = "cp_pin_d / 2"
+    for k, z in (("1", "cp_pin_z"), ("2", neg("cp_pin_z"))):
+        bk.revolve(comp, f"Tüske {k}",
+                   vertical_rect("cp_pin_x", pin_r, "head_pin_y1", "0 mm"),
+                   axis=3, plane_z=z, look="gold", material="copper")
+    # PEEK pin clip: a ring around the bar at the pins, the pins pass through it; it holds the
+    # pins, never the bar (TDK Fig. 5).
+    cx0 = "cp_pin_x - head_clip_len / 2"
+    cx1 = "cp_pin_x + head_clip_len / 2"
+    clip = bk.revolve(comp, "Tüsketartó",
+                      [(cx0, "head_cp_rd + 0.15 mm"), (cx1, "head_cp_rd + 0.15 mm"),
+                       (cx1, "liner_ri - head_fit"), (cx0, "liner_ri - head_fit")],
+                      look="peek", material="peek").body
+    for k, z in (("1", "cp_pin_z"), ("2", neg("cp_pin_z"))):
+        bk.revolve(comp, f"Tüsketartó furat {k}",
+                   vertical_rect("cp_pin_x", f"{pin_r} + 0.02 mm",
+                                 "-(liner_ri + 0.1 mm)", "0.2 mm"),
+                   axis=3, plane_z=z, op="cut", targets=[clip])
+    # Soft silicone cradle at the front node, 0.05 mm clear of the bar corners.
+    qx = "cp_x0 + cp_len / 4"
+    bk.revolve(comp, "Bölcső",
+               [(f"{qx} - head_cradle_len / 2", "head_cp_rd + head_fit"),
+                (f"{qx} + head_cradle_len / 2", "head_cp_rd + head_fit"),
+                (f"{qx} + head_cradle_len / 2", "liner_ri - head_fit"),
+                (f"{qx} - head_cradle_len / 2", "liner_ri - head_fit")],
+               look="rubber", material="plastic")
+    return comp
 
 
 def build_shared(bk, parent):
-    comps = []
-
     win = bk.component(parent, "Üveggyűrű")
-    bk.revolve(win, "Üveggyűrű",
-               [("0 mm", "collar_r"), ("win_t", "collar_r"), ("win_t", "win_ro"),
-                ("0 mm", "win_ro")],
-               look="glass_window", material="glass")
-    comps.append(win)
-
+    bk.revolve(win, "Üveggyűrű", glass_profile(), look="glass_window", material="glass")
+    comps = [win]
     for colour, look, theta in LED_SEEDS:
         comp = bk.component(parent, f"LED {colour} nm")
         yc, zc = led_centre(theta)
         seed = bk.revolve(comp, f"LED {colour} nm",
-                          axial_rect("win_t", LED_X1, yc, "led_d / 2"),
+                          axial_rect("head_led_x", "head_led_x + led_h", yc, "led_d / 2"),
                           axis=0, plane_z=zc, look=look, material="plastic")
         bk.pattern_x(comp, f"LED {colour} nm", seed, "led_pairs", look=look)
         comps.append(comp)
-
-    cam = bk.component(parent, "Kamera (OV5640)")
-    bk.revolve(cam, "Lencse", axial_rect(CAM_GLASS_X0, CAM_GLASS_X1, "ring_r", CAM_GLASS_R),
-               axis=0, look="lens", material="glass")
-    bk.revolve(cam, "Objektív", camera_barrel_profile(), axis=0,
-               look="plastic_black", material="plastic")
-    half = "cam_mod / 2"
-    bk.box(cam, "Modul", CAM_BODY_X0, CAM_BODY_X1, f"ring_r - {half}", f"ring_r + {half}",
-           neg(half), half, look="plastic_black", material="plastic")
-    bk.box(cam, "Szenzor NYÁK", CAM_BODY_X1, CAM_PCB_X1, f"ring_r - {half}",
-           f"ring_r + {half}", neg(half), half, look="pcb", material="fr4")
-    comps.append(cam)
-
+    comps.append(_camera(bk, parent))
+    comps.append(_piezo(bk, parent))
     return comps

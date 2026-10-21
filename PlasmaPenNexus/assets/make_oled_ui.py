@@ -1,12 +1,17 @@
-"""Renders oled_ui.png — the 1.1" colour AMOLED (YX011T90332, 294 × 126 landscape,
-active area 25.578 × 10.962 mm) during a treatment.
+"""Renders oled_ui.png — the 1.91" touch AMOLED (RM67162 + FT3168, 240 × 536 portrait,
+active area 19.8 × 44.22 mm) during a treatment.
+
+Portrait, top edge toward the NOSE: the pen points away from the user, so the far end of the
+display is the top of the picture, and the thumb rests just in front of that end — the one
+on-screen control (pause) sits there, within the thumb's reach.
 
     uv run --python 3.12 --with pillow --with numpy python make_oled_ui.py
 
-Left: the camera's live fluorescence map of the wound patch under 405 nm (porphyrin red,
-pyoverdine green), the plasma spot on it and the dose arc around the spot. Right: dose, time
-remaining, battery, and the change in each fluorescence signal since the start.
-Drawn at 4× and downsampled to 2340 × 1003 so curves and type stay crisp.
+Top row: pause, the standoff the vision dose-lock measures, battery. Then the camera's live
+fluorescence map of the wound patch under 405 nm (porphyrin red, pyoverdine green) with the
+plasma spot and its dose arc, then dose, time remaining and the change in each fluorescence
+signal since the start. Drawn at 4× and downsampled to 1920 × 4288 (8 px per display pixel)
+so curves and type stay crisp.
 """
 
 import math
@@ -15,9 +20,9 @@ import os
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-W, H = 2340, 1003                 # 25.578 × 10.962 mm, ≈ 91.5 px/mm
+W, H = 1920, 4288                 # 19.8 × 44.22 mm, 97 px/mm
 S = 4                             # supersampling for vector drawing
-U = W / 294.0                     # one display pixel in output px (7.96)
+U = W / 240.0                     # one display pixel in output px (8)
 WHITE = (255, 255, 255)
 GREY = (142, 142, 147)            # Apple secondary label on black
 VIOLET = (172, 142, 255)          # dose accent = the plume's colour
@@ -29,10 +34,11 @@ FONT_FALLBACK = "/System/Library/Fonts/Helvetica.ttc"
 DOSE = 0.64
 REMAINING = "0:43"
 BATTERY = 0.82
+STANDOFF = "10 mm"
 SEED = 11
 
 # Map placement in display pixels.
-MX, MY, MS, MR = 8, 8, 110, 14    # x, y, size, corner radius
+MX, MY, MS, MR = 12, 72, 216, 26  # x, y, size, corner radius
 SPOT = (0.47, 0.52, 0.25)         # plasma spot centre (fraction of map) and radius (fraction)
 KILL = 0.62                       # porphyrin left inside the treated spot
 KILL_G = 0.78                     # pyoverdine left inside the treated spot
@@ -154,7 +160,7 @@ def annulus(d, cx, cy, r_in, r_out, a0, a1, fill, steps=720):
 
 
 def dose_arc(d, cx, cy, r, width, frac):
-    annulus(d, cx, cy, r - 0.45, r + 0.45, 0, 360, (255, 255, 255, 150))
+    annulus(d, cx, cy, r - 0.8, r + 0.8, 0, 360, (255, 255, 255, 150))
     a0, a1 = -90.0, -90.0 + 360.0 * frac
     h = width / 2
     annulus(d, cx, cy, r - h, r + h, a0, a1, VIOLET + (255,))
@@ -165,13 +171,23 @@ def dose_arc(d, cx, cy, r, width, frac):
 
 
 def battery(d, x, y, w, h, frac):
-    lw = int(u(0.9))
-    d.rounded_rectangle([u(x), u(y), u(x + w), u(y + h)], radius=u(2.2), outline=GREY, width=lw)
-    pad = 1.5
+    lw = int(u(1.4))
+    d.rounded_rectangle([u(x), u(y), u(x + w), u(y + h)], radius=u(3.6), outline=GREY, width=lw)
+    pad = 2.6
     d.rounded_rectangle([u(x + pad), u(y + pad), u(x + pad + (w - 2 * pad) * frac),
-                         u(y + h - pad)], radius=u(1.0), fill=WHITE)
-    d.rounded_rectangle([u(x + w + 0.8), u(y + h * 0.33), u(x + w + 2.0), u(y + h * 0.67)],
-                        radius=u(0.5), fill=GREY)
+                         u(y + h - pad)], radius=u(1.6), fill=WHITE)
+    d.rounded_rectangle([u(x + w + 1.4), u(y + h * 0.33), u(x + w + 3.4), u(y + h * 0.67)],
+                        radius=u(0.8), fill=GREY)
+
+
+def pause_button(d, cx, cy, r):
+    """The single on-screen control: a dark filled circle with two rounded bars."""
+    d.ellipse([u(cx - r), u(cy - r), u(cx + r), u(cy + r)], fill=(44, 44, 46, 255))
+    bw, bh, gap = r * 0.19, r * 0.78, r * 0.17
+    for sx in (-1, 1):
+        x0 = cx + sx * (gap + bw / 2) - bw / 2
+        d.rounded_rectangle([u(x0), u(cy - bh / 2), u(x0 + bw), u(cy + bh / 2)],
+                            radius=u(bw / 2), fill=WHITE + (255,))
 
 
 def text(d, xy, s, f, fill, anchor):
@@ -196,31 +212,34 @@ def main():
     over = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(over)
     sx, sy, sr = SPOT
-    dose_arc(d, MX + MS * sx, MY + MS * sy, MS * sr, 3.2, DOSE)
+    dose_arc(d, MX + MS * sx, MY + MS * sy, MS * sr, 6.0, DOSE)
 
-    # Right column.
-    xl, xr = 134, 286
-    battery(d, xr - 20.5, 9, 18.5, 9, BATTERY)
+    # Top row, at the thumb: pause, standoff, battery.
+    xl, xr = 16, 228
+    pause_button(d, xl + 20, 36, 20)
+    f_small = font(22, "Medium")
+    text(d, (xl + 52, 44), STANDOFF, f_small, WHITE, "ls")
+    battery(d, xr - 37, 28, 33, 17, BATTERY)
 
-    f_dose = font(46, "Semibold")
-    f_unit = font(22, "Semibold")
+    f_dose = font(100, "Semibold")
+    f_unit = font(46, "Semibold")
     pct = f"{round(DOSE * 100)}"
-    text(d, (xl - 1.5, 60), pct, f_dose, WHITE, "ls")
-    text(d, (xl - 1.5 + tw(d, pct, f_dose) + 1.2, 60), "%", f_unit, VIOLET, "ls")
+    text(d, (xl - 3, 392), pct, f_dose, WHITE, "ls")
+    text(d, (xl - 3 + tw(d, pct, f_dose) + 2.4, 392), "%", f_unit, VIOLET, "ls")
 
-    f_time = font(24, "Medium")
-    text(d, (xl - 0.8, 90), REMAINING, f_time, GREY, "ls")
+    f_time = font(48, "Medium")
+    text(d, (xl - 1.5, 450), REMAINING, f_time, GREY, "ls")
 
     # Change in each fluorescence signal since the start.
-    f_val = font(16, "Semibold")
-    yb = 116
+    f_val = font(28, "Semibold")
+    yb = 508
     vals = [(RED, f"−{round((1 - KILL) * 100)}%"), (GREEN, f"−{round((1 - KILL_G) * 100)}%")]
     x = xl
     for col, s in vals:
-        r = 3.1
-        d.ellipse([u(x), u(yb - 5.6 - r), u(x + 2 * r), u(yb - 5.6 + r)], fill=col + (255,))
-        text(d, (x + 2 * r + 3.2, yb), s, f_val, WHITE, "ls")
-        x += 2 * r + 3.2 + tw(d, s, f_val) + 12
+        r = 5.6
+        d.ellipse([u(x), u(yb - 10.1 - r), u(x + 2 * r), u(yb - 10.1 + r)], fill=col + (255,))
+        text(d, (x + 2 * r + 5.5, yb), s, f_val, WHITE, "ls")
+        x += 2 * r + 5.5 + tw(d, s, f_val) + 22
 
     canvas = Image.alpha_composite(canvas.convert("RGBA"), over).convert("RGB")
     out = canvas.resize((W, H), Image.LANCZOS)

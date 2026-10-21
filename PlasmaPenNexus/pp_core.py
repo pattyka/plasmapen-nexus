@@ -124,11 +124,38 @@ class Backend:
         raise NotImplementedError
 
     def fillet(self, comp, name, body, edges, radius):
-        """Constant-radius fillet. edges = list of selectors, each one of
+        """Constant-radius fillet, tangent chain on. edges = list of selectors, each one of
             ("circle", x_expr, r_expr)   circular/arc edge centred on the X axis at x, radius r
             ("line_y", x_expr, z_expr)   straight edge parallel to Y through (x, *, z)
             ("line_x", y_expr, z_expr)   straight edge parallel to X through (*, y, z)
-        Cosmetic: a failed fillet is logged, never fatal. Preview backend may ignore it."""
+            ("plane_y", y_expr)          every edge lying entirely in the plane y = value
+            ("plane_y", y_expr, 1 | -1)  … and only on the z > 0 (1) / z < 0 (-1) side
+                                         (no point at z < 0 / z > 0; an edge on z = 0 is out)
+            ("plane_x", x_expr)          every edge lying entirely in the plane x = value
+            ("op_edges", op)             every edge bounding a face that `op` (an Op from a
+                                         previous call) CREATED, resolved in the current state
+                                         of `body` (Fusion: feature.faces), so later ops that
+                                         reshape those faces are followed
+            ("op_edges", op, "outer")    … only the edges shared with a face `op` did NOT
+                                         create: the rim between a cut face and the original
+                                         body (the edges you break after slicing a flat)
+            ("minus", sel_a, sel_b)      the edges sel_a matches that sel_b does not (e.g. a
+                                         facet rim without its edge on a joint face:
+                                         ("minus", ("op_edges", cut, "outer"), ("plane_x", x)))
+        Tolerance 0.05 mm. Only edges of `body` are selected. Returns an Op, or None.
+        Cosmetic: a failed fillet is logged, never fatal."""
+        raise NotImplementedError
+
+    def chamfer(self, comp, name, body, edges, distance):
+        """Equal-distance chamfer, tangent chain on. `edges` = the same selectors as fillet.
+        Cosmetic: a failed chamfer is logged, never fatal (returns None)."""
+        raise NotImplementedError
+
+    def count(self, expr):
+        """Value of a unitless integer expression in the current parameter state, for building
+        a row of N features in a loop (e.g. dock pads). The row has as many features as the
+        count had when the model was built; a later Fusion parameter edit moves them but does
+        not add or remove any."""
         raise NotImplementedError
 
     # ── convenience (implemented on top of the primitives) ──
@@ -199,6 +226,13 @@ class FusionBackend(Backend):
         if v == -1 and self.um.evaluateExpression(f"({expr}) + 1 mm", "mm") == -1:
             raise ValueError(f"Bad expression: {expr}")
         return v
+
+    def count(self, expr):
+        v = self.um.evaluateExpression(str(expr), "")
+        n = int(round(v))
+        if abs(v - n) > 1e-6 or n < 0:
+            raise ValueError(f"count '{expr}' = {v} is not a non-negative integer")
+        return n
 
     def _op(self, op):
         F = self.fusion.FeatureOperations
@@ -428,12 +462,22 @@ class FusionBackend(Backend):
                     self._pen_tokens.add(b.entityToken)
         return Op(feat, new)
 
+    def _edge_collection(self, body, edges):
+        """ObjectCollection of the edges of `body` matched by any selector, each edge once
+        (tempId is unique within one body and stable while the body is not modified)."""
+        coll = self.core.ObjectCollection.create()
+        seen = set()
+        for sel in edges:
+            for e in self._select_edges(body, sel):
+                if e.tempId in seen:
+                    continue
+                seen.add(e.tempId)
+                coll.add(e)
+        return coll
+
     def fillet(self, comp, name, body, edges, radius):
         try:
-            coll = self.core.ObjectCollection.create()
-            for sel in edges:
-                for e in self._select_edges(body, sel):
-                    coll.add(e)
+            coll = self._edge_collection(body, edges)
             if coll.count == 0:
                 self.log(f"  · {name}: no edge matched {edges}, fillet skipped")
                 return None
@@ -450,10 +494,129 @@ class FusionBackend(Backend):
             self.log(f"  · {name}: fillet failed, model unaffected\n{traceback.format_exc(limit=1)}")
             return None
 
+    def chamfer(self, comp, name, body, edges, distance):
+        try:
+            coll = self._edge_collection(body, edges)
+            if coll.count == 0:
+                self.log(f"  · {name}: no edge matched {edges}, chamfer skipped")
+                return None
+            feats = comp.features.chamferFeatures
+            create2 = getattr(feats, "createInput2", None)
+            if create2 is not None:  # December 2020+: edge sets
+                inp = create2()
+                if inp.chamferEdgeSets.addEqualDistanceChamferEdgeSet(
+                        coll, self.vi(distance), True) is False:
+                    raise RuntimeError("addEqualDistanceChamferEdgeSet returned False")
+            else:  # older Fusion: one edge set per input
+                inp = feats.createInput(coll, True)
+                if inp.setToEqualDistance(self.vi(distance)) is False:
+                    raise RuntimeError("setToEqualDistance returned False")
+            feat = feats.add(inp)
+            feat.name = name[:60]
+            return Op(feat, [])
+        except Exception:  # cosmetic only
+            self.log(f"  · {name}: chamfer failed, model unaffected\n"
+                     f"{traceback.format_exc(limit=1)}")
+            return None
+
+    def _edge_points(self, e, n=8):
+        """n + 1 points spread over the edge's parameter range (cm)."""
+        ev = e.evaluator
+        ok, t0, t1 = ev.getParameterExtents()
+        if not ok:
+            return []
+        ok, pts = ev.getPointsAtParameters([t0 + (t1 - t0) * i / n for i in range(n + 1)])
+        return list(pts) if ok else []
+
+    @staticmethod
+    def _z_side_ok(pts, z_sign, tol):
+        if z_sign is None:
+            return True
+        zs = [p.z * z_sign for p in pts]
+        return min(zs) > -tol and max(zs) > tol
+
+    def _own_face(self, body, face):
+        """`face` (from some feature's .faces) as a face of `body`, or None. Matched by tempId
+        inside `body`, confirmed by area + a point on the face, so a face of another body that
+        happens to carry the same tempId is never taken (entity tokens must not be compared)."""
+        try:
+            cands = body.findByTempId(face.tempId)
+        except Exception:
+            return None
+        p = face.pointOnFace
+        for c in cands or []:
+            f = self.fusion.BRepFace.cast(c)
+            if f is None:
+                continue
+            if abs(f.area - face.area) <= 1e-9 * max(1.0, face.area) and \
+                    f.pointOnFace.distanceTo(p) < 1e-6:
+                return f
+        return None
+
+    def _op_edges(self, body, op_result, outer):
+        feat = getattr(op_result, "feature", None)
+        if feat is None:
+            raise ValueError(f"op_edges: {op_result!r} carries no feature")
+        mine = {}
+        for f in feat.faces:  # faces created by the feature, in the current model state
+            own = self._own_face(body, f)
+            if own is not None:
+                mine[own.tempId] = own
+        out = []
+        seen = set()
+        for f in mine.values():
+            for e in f.edges:
+                if e.tempId in seen or e.isDegenerate:
+                    continue
+                if outer and all(g.tempId in mine for g in e.faces):
+                    continue
+                seen.add(e.tempId)
+                out.append(e)
+        return out
+
     def _select_edges(self, body, sel):
         kind = sel[0]
         tol = 0.005  # cm = 0.05 mm
         out = []
+        if kind == "minus":
+            if len(sel) != 3:
+                raise ValueError(f"bad selector {sel!r}: ('minus', sel_a, sel_b)")
+            drop = set(e.tempId for e in self._select_edges(body, sel[2]))
+            return [e for e in self._select_edges(body, sel[1]) if e.tempId not in drop]
+        if kind == "plane_x":
+            if len(sel) != 2:
+                raise ValueError(f"bad selector {sel!r}: ('plane_x', x_expr)")
+            x = self.val(sel[1])
+            for e in body.edges:
+                if e.isDegenerate:
+                    continue
+                bb = e.boundingBox
+                if bb.minPoint.x > x + tol or bb.maxPoint.x < x - tol:  # cheap reject
+                    continue
+                pts = self._edge_points(e)
+                if pts and all(abs(p.x - x) < tol for p in pts):
+                    out.append(e)
+            return out
+        if kind == "op_edges":
+            if len(sel) not in (2, 3) or (len(sel) == 3 and sel[2] != "outer"):
+                raise ValueError(f"bad selector {sel!r}: ('op_edges', op[, 'outer'])")
+            return self._op_edges(body, sel[1], len(sel) == 3)
+        if kind == "plane_y":
+            z_sign = sel[2] if len(sel) == 3 else None
+            if len(sel) not in (2, 3) or z_sign not in (None, 1, -1) or isinstance(z_sign, bool):
+                raise ValueError(f"bad selector {sel!r}: ('plane_y', y_expr[, 1 | -1])")
+            y = self.val(sel[1])
+            for e in body.edges:
+                if e.isDegenerate:
+                    continue
+                bb = e.boundingBox  # cheap reject before sampling
+                if bb.minPoint.y > y + tol or bb.maxPoint.y < y - tol:
+                    continue
+                pts = self._edge_points(e)
+                if pts and all(abs(p.y - y) < tol for p in pts) and \
+                        self._z_side_ok(pts, z_sign, tol):
+                    out.append(e)
+            return out
         c3 = self.core.Circle3D.classType()
         a3 = self.core.Arc3D.classType()
         l3 = self.core.Line3D.classType()

@@ -27,7 +27,10 @@ What the backend enforces (each of these RAISES, like Fusion would reject the fe
     whole body, an empty intersection, unknown look/material keys.
 Things Fusion would accept but that look wrong go to bk.warnings (cut that splits a body into
 several lumps, cross-component targets, a pattern instance missing its targets, a revolve about
-X drawn on an offset plane, ...). Fillets that fail are only logged (bk.fillet_failures).
+X drawn on an offset plane, ...). Fillets / chamfers that fail are only logged
+(bk.fillet_failures). Edge selectors (pp_core.Backend.fillet) are matched like FusionBackend;
+("op_edges", op) re-finds the faces `op` created at selection time: a body face counts as created
+while it still lies on a face the op's tool (or fillet/chamfer history) produced.
 
 Frame: identical to Fusion — every component has its own XY plane, profiles are drawn in it
 (offset by plane_z for revolve / z0 for extrude), X is the pen axis. Units are mm.
@@ -60,34 +63,45 @@ import numpy as np  # noqa: E402
 from OCP.BRep import BRep_Tool  # noqa: E402
 from OCP.BRepAdaptor import BRepAdaptor_Curve  # noqa: E402
 from OCP.BRepCheck import BRepCheck_Analyzer  # noqa: E402
-from OCP.BRepFilletAPI import BRepFilletAPI_MakeFillet  # noqa: E402
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex  # noqa: E402
+from OCP.BRepClass import BRepClass_FaceClassifier  # noqa: E402
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape  # noqa: E402
+from OCP.BRepFilletAPI import BRepFilletAPI_MakeChamfer, BRepFilletAPI_MakeFillet  # noqa: E402
 from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeRevol  # noqa: E402
-from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Vec  # noqa: E402
+from OCP.BRepTools import BRepTools  # noqa: E402
+from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Pnt2d, gp_Vec  # noqa: E402
 from OCP.GeomAbs import GeomAbs_Circle, GeomAbs_Line  # noqa: E402
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE  # noqa: E402
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_VERTEX  # noqa: E402
 from OCP.TopExp import TopExp, TopExp_Explorer  # noqa: E402
 from OCP.TopoDS import TopoDS  # noqa: E402
-from OCP.TopTools import TopTools_IndexedMapOfShape  # noqa: E402
+from OCP.TopTools import (TopTools_IndexedDataMapOfShapeListOfShape,  # noqa: E402
+                          TopTools_IndexedMapOfShape)
 
 import pp_core  # noqa: E402
 from pp_params import PARAMS  # noqa: E402
 
-BUILDER_MODULES = ["pp_body", "pp_head", "pp_internals", "pp_scene"]  # pp_body first: pp_head uses body_* params
+# Same order as PlasmaPenNexus.py (EXTRA_PARAMS are collected in this order).
+BUILDER_MODULES = ["pp_shell", "pp_head", "pp_insert", "pp_electronics", "pp_scene"]
+SHELL_MODULES = ["pp_shell", "pp_head", "pp_insert"]                     # build_shell(cutaway)
+SHARED_MODULES = ["pp_shell", "pp_head", "pp_insert", "pp_electronics"]  # build_shared
 
 DENSITY = {  # g/cm³
     "aluminum": 2.70, "peek": 1.30, "glass": 2.50, "plastic": 1.15, "steel": 7.85,
-    "copper": 8.96, "fr4": 1.85, "battery": 2.80,
+    "copper": 8.96, "fr4": 1.85, "battery": 2.80, "pei": 1.27,
 }
 BRIEF_LOOKS = {
     "alu", "alu_dark", "peek", "glass_window", "glass_black", "lens", "led405", "led660",
     "plasma_core", "plasma_halo", "spot405", "ceramic", "pcb", "shield", "copper", "gold",
     "steel", "battery_wrap", "plastic_black", "plastic_white", "rubber", "fan", "agar", "petri",
-    "oled_on",
+    "oled_on", "pei", "glass_frost",
 }
 BRIEF_MATERIALS = set(DENSITY)
 
 GEO_EPS = 1e-4      # mm — coincidence tolerance for profile checks
 SEL_TOL = 0.05      # mm — FusionBackend._select_edges tolerance (0.005 cm)
+SEAM_DEG = float(os.environ.get("PP_SEAM_DEG", "120"))  # where full X revolves put their OCC
+#                    seam (θ from +Y toward +Z); 120° lies between the 60°-spaced LED/vent angles,
+#                    off both flats, and inside the half the engineering cutaway removes
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -415,6 +429,10 @@ class Feature:
     op: str
     tool: object = None          # cq.Shape of the tool (local coords)
     targets: list = field(default_factory=list)
+    # Faces this feature created, as built (cq.Face, local coords). A body face counts as
+    # created by the feature while it still lies on one of these — the preview's equivalent of
+    # Fusion's feature.faces, re-resolved at selection time (see _op_faces).
+    ref_faces: list = field(default_factory=list)
 
 
 def _check_valid(shape):
@@ -672,7 +690,7 @@ class PreviewBackend(pp_core.Backend):
             self._keys(ctx, look, material)
             if targets:
                 self.warn(f"{ctx}: targets given to a 'new' op are ignored by Fusion")
-            feat = self._register(Feature(kind, name, comp, op, tool, []))
+            feat = self._register(Feature(kind, name, comp, op, tool, [], list(tool.Faces())))
             solids = _solids(tool)
             bodies = []
             for i, s in enumerate(solids):
@@ -698,7 +716,7 @@ class PreviewBackend(pp_core.Backend):
                           f"in {comp.path()} — Fusion needs both in the same component")
         if look is not None or material is not None:
             self.warn(f"{ctx}: look/material on a '{op}' op are ignored by Fusion")
-        feat = self._register(Feature(kind, name, comp, op, tool, targets))
+        feat = self._register(Feature(kind, name, comp, op, tool, targets, list(tool.Faces())))
         self._combine(ctx, feat, tool, op, targets, strict=True)
         return pp_core.Op(feat, [])
 
@@ -828,6 +846,11 @@ class PreviewBackend(pp_core.Backend):
                                        gp_Dir(d.x, d.y, d.z)), ang, True)
             mk.Build()
             solid = cq.Shape.cast(mk.Shape())
+            if axis == "x" and abs(ang - 2 * math.pi) < 1e-9 and SEAM_DEG:
+                # Fusion bodies have no seam edges; OCC puts one where the profile plane is
+                # (θ = 0, the top, where this design has its flat, camera and button). Turning a
+                # full revolve about its own axis changes nothing but the seam position.
+                solid = solid.rotate(cq.Vector(0, 0, 0), cq.Vector(1, 0, 0), SEAM_DEG)
         except Exception as ex:
             raise OccError(f"{ctx}: OCC revolve failed: {ex}") from None
         return self._apply(comp, name, solid, op, targets, look, material, pen, "revolve")
@@ -903,6 +926,7 @@ class PreviewBackend(pp_core.Backend):
                     nb.stage = b.stage
                     comp.bodies.append(nb)
                     new.append(nb)
+                    feat.ref_faces.extend(s.Faces())
                     if src_pen:
                         self.pen_bodies.append(nb)
             return pp_core.Op(feat, new)
@@ -916,80 +940,122 @@ class PreviewBackend(pp_core.Backend):
         for k in range(1, n):
             deg = 360.0 * k / n
             tool = src.tool.rotate(cq.Vector(0, 0, 0), cq.Vector(1, 0, 0), deg)
+            feat.ref_faces.extend(tool.Faces())
             self._combine(f"{ctx} #{k + 1}", feat, tool, src.op, src.targets, strict=False)
         return pp_core.Op(feat, [])
 
     def fillet(self, comp, name, body, edges, radius):
+        return self._blend("fillet", comp, name, body, edges, radius)
+
+    def chamfer(self, comp, name, body, edges, distance):
+        return self._blend("chamfer", comp, name, body, edges, distance)
+
+    def _blend(self, kind, comp, name, body, edges, size):
+        """Shared fillet / chamfer: same selectors, same non-fatal failure policy as Fusion
+        (every failure lands in bk.fillet_failures, the body is left untouched)."""
         comp = self._comp(comp, name)
         ctx = self._ctx(comp, name)
+        what = "fillet radius" if kind == "fillet" else "chamfer distance"
         try:
-            r = self.ev.length(radius, "fillet radius")
+            r = self.ev.length(size, what)
+            if not isinstance(edges, (list, tuple)):
+                raise TypeError("edges must be a list of selectors")
             sels = [self._sel_values(sel) for sel in edges]
         except ExprError as e:
             raise ExprError(f"{ctx}: {e}") from None
-        except (TypeError, ValueError, IndexError):
-            raise BuildError(f"{ctx}: bad edge selector list {edges!r}") from None
+        except (TypeError, ValueError, IndexError) as ex:
+            raise BuildError(f"{ctx}: bad edge selector list {edges!r}: {ex}") from None
         if not isinstance(body, Body) or not body.valid:
-            msg = f"  · {name}: fillet target {body!r} is not a live body, fillet skipped"
-            self.log(msg)
-            self.fillet_failures.append(f"[{self.current_module}] {ctx}: not a live body")
+            self.log(f"  · {name}: {kind} target {body!r} is not a live body, {kind} skipped")
+            self.fillet_failures.append(f"[{self.current_module}] {ctx}: {kind} target is not "
+                                        "a live body")
             return None
         if r <= 0:
-            raise BuildError(f"{ctx}: fillet radius {r:g} must be > 0")
-        found = []
-        for sel in sels:
-            found.extend(self._select_edges(body.shape, sel))
+            raise BuildError(f"{ctx}: {what} {r:g} must be > 0")
+        found = self._collect_edges(body.shape, sels)
         if not found:
-            self.log(f"  · {name}: no edge matched {edges}, fillet skipped")
-            self.fillet_failures.append(f"[{self.current_module}] {ctx}: no edge matched {edges}")
+            self.log(f"  · {name}: no edge matched {edges}, {kind} skipped")
+            self.fillet_failures.append(f"[{self.current_module}] {ctx}: {kind}: no edge "
+                                        f"matched {edges}")
             return None
         try:
-            mk = BRepFilletAPI_MakeFillet(body.shape.wrapped)
+            mk = (BRepFilletAPI_MakeFillet if kind == "fillet"
+                  else BRepFilletAPI_MakeChamfer)(body.shape.wrapped)
             for e in found:
-                mk.Add(r, e)
+                mk.Add(r, e)  # tangent-contiguous edges are propagated, like isTangentChain
             mk.Build()
             if not mk.IsDone():
-                raise RuntimeError("BRepFilletAPI_MakeFillet not done")
+                raise RuntimeError(f"BRepFilletAPI_Make{kind.capitalize()} not done")
             shp = cq.Shape.cast(mk.Shape())
             if not _check_valid(shp) or abs(shp.Volume()) < 1e-6:
-                raise RuntimeError("fillet result invalid")
+                raise RuntimeError(f"{kind} result invalid")
+            created = _generated_faces(mk, body.shape, shp)
         except Exception as ex:
-            self.log(f"  · {name}: fillet failed, model unaffected ({ex})")
-            self.fillet_failures.append(f"[{self.current_module}] {ctx}: OCC fillet failed "
-                                        f"(r = {r:g} mm, {len(found)} edges): {ex}")
+            self.log(f"  · {name}: {kind} failed, model unaffected ({ex})")
+            self.fillet_failures.append(f"[{self.current_module}] {ctx}: OCC {kind} failed "
+                                        f"({what} {r:g} mm, {len(found)} edges): {ex}")
             return None
         body.shape = shp
-        feat = self._register(Feature("fillet", name, comp, "fillet"))
+        feat = self._register(Feature(kind, name, comp, kind, ref_faces=created))
         return pp_core.Op(feat, [])
 
     def _sel_values(self, sel):
+        if not isinstance(sel, (tuple, list)) or not sel:
+            raise ValueError(f"selector {sel!r} is not a tuple")
         kind = sel[0]
-        if kind == "circle":
-            return (kind, self.ev.length(sel[1], "circle x"), self.ev.length(sel[2], "circle r"))
-        if kind == "line_y":
-            return (kind, self.ev.length(sel[1], "line_y x"), self.ev.length(sel[2], "line_y z"))
-        if kind == "line_x":
-            return (kind, self.ev.length(sel[1], "line_x y"), self.ev.length(sel[2], "line_x z"))
-        raise ValueError(kind)
+        if kind in ("circle", "line_y", "line_x"):
+            if len(sel) != 3:
+                raise ValueError(f"('{kind}', a_expr, b_expr) expected, got {sel!r}")
+            names = {"circle": ("x", "r"), "line_y": ("x", "z"), "line_x": ("y", "z")}[kind]
+            return (kind, self.ev.length(sel[1], f"{kind} {names[0]}"),
+                    self.ev.length(sel[2], f"{kind} {names[1]}"))
+        if kind == "plane_y":
+            zs = sel[2] if len(sel) == 3 else None
+            if len(sel) not in (2, 3) or isinstance(zs, bool) or zs not in (None, 1, -1):
+                raise ValueError(f"('plane_y', y_expr[, 1 | -1]) expected, got {sel!r}")
+            return (kind, self.ev.length(sel[1], "plane_y y"), zs)
+        if kind == "plane_x":
+            if len(sel) != 2:
+                raise ValueError(f"('plane_x', x_expr) expected, got {sel!r}")
+            return (kind, self.ev.length(sel[1], "plane_x x"))
+        if kind == "minus":
+            if len(sel) != 3:
+                raise ValueError(f"('minus', sel_a, sel_b) expected, got {sel!r}")
+            return (kind, self._sel_values(sel[1]), self._sel_values(sel[2]))
+        if kind == "op_edges":
+            if len(sel) not in (2, 3) or (len(sel) == 3 and sel[2] != "outer"):
+                raise ValueError(f"('op_edges', op[, 'outer']) expected, got {sel!r}")
+            op = sel[1]
+            if not isinstance(op, pp_core.Op) or not isinstance(op.feature, Feature):
+                raise ValueError(f"op_edges needs an Op returned by an earlier call, got {op!r}")
+            return (kind, op.feature, len(sel) == 3)
+        raise ValueError(f"unknown edge selector '{kind}'")
+
+    @classmethod
+    def _collect_edges(cls, shape, sels):
+        """Edges of `shape` matched by any selector, each edge once."""
+        seen = TopTools_IndexedMapOfShape()
+        out = []
+        for sel in sels:
+            for e in cls._select_edges(shape, sel):
+                if not seen.Contains(e):
+                    seen.Add(e)
+                    out.append(e)
+        return out
 
     @staticmethod
     def _select_edges(shape, sel):
         """Same matching rules as FusionBackend._select_edges, tolerance 0.05 mm. Seam edges of
         periodic faces are skipped (Fusion/ASM bodies have none)."""
-        kind, a, b = sel
-        emap = TopTools_IndexedMapOfShape()
-        TopExp.MapShapes_s(shape.wrapped, TopAbs_EDGE, emap)
-        seams = set()
-        fexp = TopExp_Explorer(shape.wrapped, TopAbs_FACE)
-        while fexp.More():
-            f = TopoDS.Face_s(fexp.Current())
-            eexp = TopExp_Explorer(f, TopAbs_EDGE)
-            while eexp.More():
-                e = TopoDS.Edge_s(eexp.Current())
-                if BRep_Tool.IsClosed_s(e, f):
-                    seams.add(emap.FindIndex(e))
-                eexp.Next()
-            fexp.Next()
+        kind = sel[0]
+        if kind == "op_edges":
+            return _op_edges(shape, sel[1], sel[2])
+        if kind == "minus":
+            drop = TopTools_IndexedMapOfShape()
+            for e in PreviewBackend._select_edges(shape, sel[2]):
+                drop.Add(e)
+            return [e for e in PreviewBackend._select_edges(shape, sel[1]) if not drop.Contains(e)]
+        emap, seams = _edge_index(shape)
         out = []
         for i in range(1, emap.Extent() + 1):
             if i in seams:
@@ -999,6 +1065,25 @@ class PreviewBackend(pp_core.Backend):
                 continue
             ad = BRepAdaptor_Curve(e)
             t = ad.GetType()
+            if kind == "plane_x":
+                pts = [ad.Value(ad.FirstParameter() + (ad.LastParameter() - ad.FirstParameter())
+                                * k / 8) for k in range(9)]
+                if all(abs(p.X() - sel[1]) < SEL_TOL for p in pts):
+                    out.append(e)
+                continue
+            if kind == "plane_y":
+                _, y, zs = sel
+                pts = [ad.Value(ad.FirstParameter() + (ad.LastParameter() - ad.FirstParameter())
+                                * k / 8) for k in range(9)]
+                if not all(abs(p.Y() - y) < SEL_TOL for p in pts):
+                    continue
+                if zs is not None:
+                    z = [p.Z() * zs for p in pts]
+                    if not (min(z) > -SEL_TOL and max(z) > SEL_TOL):
+                        continue
+                out.append(e)
+                continue
+            _, a, b = sel
             if kind == "circle":
                 if t != GeomAbs_Circle:
                     continue
@@ -1021,6 +1106,17 @@ class PreviewBackend(pp_core.Backend):
                 if ok:
                     out.append(e)
         return out
+
+    def count(self, expr):
+        try:
+            return self.ev.count(expr, "count")
+        except ExprError as e:
+            raise ExprError(f"bk.count: {e}") from None
+
+    def op_faces(self, body, op_result):
+        """Faces of `body` currently created by `op_result` (cq.Face list) — for tests."""
+        fmap, created = _op_faces(body.shape, op_result.feature)
+        return [cq.Face(TopoDS.Face_s(fmap.FindKey(i))) for i in sorted(created)]
 
     # ── traversal / reporting ──
     def placement(self, comp):
@@ -1071,6 +1167,140 @@ def _prism(face, dz):
     mk = BRepPrimAPI_MakePrism(face.wrapped, gp_Vec(0, 0, dz), True)
     mk.Build()
     return cq.Shape.cast(mk.Shape())
+
+
+# ── created-face tracking (op_edges selector) ──
+
+COINCIDENT_TOL = 1e-3   # mm — a body face lies on a reference face if every sample is this close
+
+
+def _edge_index(shape):
+    """(indexed edge map, set of seam-edge indices) of a shape."""
+    emap = TopTools_IndexedMapOfShape()
+    TopExp.MapShapes_s(shape.wrapped, TopAbs_EDGE, emap)
+    seams = set()
+    fexp = TopExp_Explorer(shape.wrapped, TopAbs_FACE)
+    while fexp.More():
+        f = TopoDS.Face_s(fexp.Current())
+        eexp = TopExp_Explorer(f, TopAbs_EDGE)
+        while eexp.More():
+            e = TopoDS.Edge_s(eexp.Current())
+            if BRep_Tool.IsClosed_s(e, f):
+                seams.add(emap.FindIndex(e))
+            eexp.Next()
+        fexp.Next()
+    return emap, seams
+
+
+def _face_samples(face, cap=25):
+    """Points strictly inside a face (TopoDS_Face): a UV grid filtered by the face classifier,
+    refined until at least one point falls inside (thin faces)."""
+    umin, umax, vmin, vmax = BRepTools.UVBounds_s(face)
+    surf = BRep_Tool.Surface_s(face)
+    for n in (5, 11, 31):
+        pts = []
+        for i in range(n):
+            u = umin + (umax - umin) * (i + 0.5) / n
+            for j in range(n):
+                v = vmin + (vmax - vmin) * (j + 0.5) / n
+                cls = BRepClass_FaceClassifier(face, gp_Pnt2d(u, v), 1e-7)
+                if cls.State() == TopAbs_IN:
+                    pts.append(surf.Value(u, v))
+        if pts:
+            step = max(1, len(pts) // cap)
+            return pts[::step]
+    return []
+
+
+def _ref_boxes(faces):
+    """[(TopoDS_Face, cq.BoundBox)] for reference faces (cq.Face)."""
+    return [(f.wrapped, fast_bb(f)) for f in faces]
+
+
+def _face_on(face, refs, tol=COINCIDENT_TOL):
+    """True if every interior sample of `face` lies on one of the reference faces."""
+    if not refs:
+        return False
+    fbb = fast_bb(cq.Face(face))
+    near = [r for r in refs if _bb_overlap(fbb, r[1], 10 * tol)]
+    if not near:
+        return False
+    pts = _face_samples(face)
+    if not pts:
+        return False
+    for p in pts:
+        v = BRepBuilderAPI_MakeVertex(p).Vertex()
+        hit = False
+        for rf, bb in near:
+            if not (bb.xmin - tol <= p.X() <= bb.xmax + tol and bb.ymin - tol <= p.Y() <= bb.ymax
+                    + tol and bb.zmin - tol <= p.Z() <= bb.zmax + tol):
+                continue
+            d = BRepExtrema_DistShapeShape(v, rf)
+            if d.IsDone() and d.Value() < tol:
+                hit = True
+                break
+        if not hit:
+            return False
+    return True
+
+
+def _op_faces(shape, feat):
+    """(indexed face map of `shape`, indices of the faces `feat` created) — resolved now, in the
+    body's current state, like Fusion's feature.faces."""
+    fmap = TopTools_IndexedMapOfShape()
+    TopExp.MapShapes_s(shape.wrapped, TopAbs_FACE, fmap)
+    refs = _ref_boxes(feat.ref_faces)
+    created = set()
+    for i in range(1, fmap.Extent() + 1):
+        if _face_on(TopoDS.Face_s(fmap.FindKey(i)), refs):
+            created.add(i)
+    return fmap, created
+
+
+def _op_edges(shape, feat, outer):
+    """Edges bounding the faces `feat` created; outer=True keeps only those shared with a face
+    the feature did not create. Seam and degenerate edges are skipped (Fusion has none)."""
+    fmap, created = _op_faces(shape, feat)
+    emap, seams = _edge_index(shape)
+    anc = TopTools_IndexedDataMapOfShapeListOfShape()
+    TopExp.MapShapesAndAncestors_s(shape.wrapped, TopAbs_EDGE, TopAbs_FACE, anc)
+    out, seen = [], set()
+    for fi in sorted(created):
+        eexp = TopExp_Explorer(fmap.FindKey(fi), TopAbs_EDGE)
+        while eexp.More():
+            e = TopoDS.Edge_s(eexp.Current())
+            eexp.Next()
+            ei = emap.FindIndex(e)
+            if ei in seen or ei in seams or BRep_Tool.Degenerated_s(e):
+                continue
+            if outer and all(fmap.FindIndex(g) in created for g in anc.FindFromKey(e)):
+                continue
+            seen.add(ei)
+            out.append(TopoDS.Edge_s(emap.FindKey(ei)))
+    return out
+
+
+def _generated_faces(mk, old, new):
+    """Faces a fillet / chamfer created (OCC history: Generated from every input edge and
+    vertex); geometric fallback = faces of the result that lie on no face of the input."""
+    out = []
+    seen = TopTools_IndexedMapOfShape()
+    for typ in (TopAbs_EDGE, TopAbs_VERTEX):
+        m = TopTools_IndexedMapOfShape()
+        TopExp.MapShapes_s(old.wrapped, typ, m)
+        for i in range(1, m.Extent() + 1):
+            try:
+                gen = mk.Generated(m.FindKey(i))
+            except Exception:
+                continue
+            for s in gen:
+                if s.ShapeType() == TopAbs_FACE and not seen.Contains(s):
+                    seen.Add(s)
+                    out.append(cq.Face(TopoDS.Face_s(s)))
+    if not out:
+        refs = _ref_boxes(list(old.Faces()))
+        out = [f for f in new.Faces() if not _face_on(f.wrapped, refs)]
+    return out
 
 
 def fast_bb(shape):
@@ -1203,8 +1433,9 @@ def frames(ev):
 
 
 def build_model(bk, mods, render=True, engineering=True):
-    """Mirror of PlasmaPenNexus.run(): head shell, body shell, head/body/internals shared,
-    scene — all directly in the render component (mass counted); then count_mass = False,
+    """Mirror of PlasmaPenNexus.run(): every SHELL_MODULES build_shell, every SHARED_MODULES
+    build_shared, the scene — all directly in the render component (mass counted); then
+    count_mass = False,
     cut shells in the engineering component + a second occurrence of every shared comp."""
     res = ModelResult()
     by = {m.__name__: m for m in mods}
@@ -1221,15 +1452,15 @@ def build_model(bk, mods, render=True, engineering=True):
 
     if render:
         bk.count_mass = True
-        step("pp_head", "build_shell", res.render, cutaway=False)
-        step("pp_body", "build_shell", res.render, cutaway=False)
-        for n in ("pp_head", "pp_body", "pp_internals"):
+        for n in SHELL_MODULES:
+            step(n, "build_shell", res.render, cutaway=False)
+        for n in SHARED_MODULES:
             res.shared += step(n, "build_shared", res.render)
         step("pp_scene", "build_scene", res.render)
     if engineering:
         bk.count_mass = False
-        step("pp_head", "build_shell", res.engineering, cutaway=True)
-        step("pp_body", "build_shell", res.engineering, cutaway=True)
+        for n in SHELL_MODULES:
+            step(n, "build_shell", res.engineering, cutaway=True)
         for c in res.shared:
             bk.add_existing(res.engineering, c)
         bk.count_mass = True
